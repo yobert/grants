@@ -2,39 +2,31 @@ package main
 
 import (
 	"fmt"
-	"strings"
 )
 
 type User struct {
 	Name     string
 	Password string
 
-	Grants map[string]map[string]Grants
+	// database -> table -> perm name -> perm
+	Grants map[string]map[string]map[string]Perm
 
-	Super bool
+	// user-level permissions such as SUPER and LOGIN
+	Perms map[string]Perm
 }
 
-type Grants struct {
-	Select bool
-}
-
-func (u User) String() string {
-	attrs := []string{}
-	if u.Super {
-		attrs = append(attrs, "superuser")
+func (u User) Print() {
+	fmt.Printf("user %#v password %#v\n", u.Name, u.Password)
+	for _, p := range u.Perms {
+		fmt.Println("\t» " + p.Name)
 	}
-
-	attrstr := ""
-	if len(attrs) > 0 {
-		attrstr = " (" + strings.Join(attrs, ", ") + ")"
+	for dbname, tables := range u.Grants {
+		fmt.Println("\t" + dbname)
+		for tablename, grants := range tables {
+			fmt.Println("\t\t" + tablename)
+			for _, perm := range grants {
+				fmt.Println("\t\t\t" + perm.String())
+			}
+		}
 	}
-	return fmt.Sprintf("%s%s", u.Name, attrstr)
-}
-
-func (g Grants) String() string {
-	list := []string{}
-	if g.Select {
-		list = append(list, "SELECT")
-	}
-	return strings.Join(list, ", ")
 }

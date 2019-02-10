@@ -1,6 +1,11 @@
 package main
 
 import (
+	"crypto/md5"
+	"fmt"
+	"os"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx"
@@ -16,7 +21,7 @@ type pgRole struct {
 	RolCanLogin    bool
 	RolReplication bool
 	RolConnLimit   int
-	RolPassword    string
+	RolPassword    *string
 	RolValidUntil  *string
 	RolBypassRLS   bool
 	RolConfig      []string
@@ -25,20 +30,26 @@ type pgRole struct {
 type pgACL struct {
 	Role    string
 	Granter string
+	Perms   []Perm
+}
 
-	Select     bool
-	Update     bool
-	Insert     bool
-	Delete     bool
-	Truncate   bool
-	References bool
-	Trigger    bool
-	Execute    bool
-	Usage      bool
-	Create     bool
-	Connect    bool
-	Temporary  bool
-	Star       bool
+var pgConns = map[string]*pgx.Conn{}
+var lastPrintedDB = "postgres"
+
+func pgConn(config pgx.ConnConfig) (*pgx.Conn, error) {
+	key := fmt.Sprintf("%s/%s/%s", config.User, config.Host, config.Database)
+
+	c, ok := pgConns[key]
+	if ok {
+		return c, nil
+	}
+	var err error
+	c, err = pgx.Connect(config)
+	if err != nil {
+		return nil, err
+	}
+	pgConns[key] = c
+	return c, nil
 }
 
 func pgSelectExisting() (map[string]User, error) {
@@ -55,18 +66,19 @@ func pgSelectExisting() (map[string]User, error) {
 		Database: "postgres",
 	}
 
-	conn, err := pgx.Connect(config)
+	conn, err := pgConn(config)
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
 
 	// Load every user (role). This list is the same no matter what database we connect to.
 
-	sql := `select rolname, rolsuper, rolinherit, rolcreaterole, rolcreatedb,
-                  rolcanlogin, rolreplication, rolconnlimit, rolpassword, rolvaliduntil,
-                  rolbypassrls, rolconfig
-           from pg_roles;`
+	sql := `select r.rolname, r.rolsuper, r.rolinherit, r.rolcreaterole, r.rolcreatedb,
+                  r.rolcanlogin, r.rolreplication, r.rolconnlimit, s.passwd, r.rolvaliduntil,
+                  r.rolbypassrls, r.rolconfig
+           from pg_roles as r
+           left join pg_shadow as s on
+             r.rolname = s.usename;`
 
 	rows, err := conn.Query(sql)
 	if err != nil {
@@ -85,10 +97,22 @@ func pgSelectExisting() (map[string]User, error) {
 		if strings.HasPrefix(r.RolName, "pg_") {
 			continue
 		}
+		pass := ""
+		if r.RolPassword != nil {
+			pass = *r.RolPassword
+		}
+		perms := map[string]Perm{}
+		if r.RolSuper {
+			perms[Super.Name] = Super
+		}
+		if r.RolCanLogin {
+			perms[Login.Name] = Login
+		}
 		out[r.RolName] = User{
-			Name:   r.RolName,
-			Grants: map[string]map[string]Grants{},
-			Super:  r.RolSuper,
+			Name:     r.RolName,
+			Password: pass,
+			Grants:   map[string]map[string]map[string]Perm{},
+			Perms:    perms,
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -97,6 +121,7 @@ func pgSelectExisting() (map[string]User, error) {
 
 	// Now go through each database, loading all the table permissions
 
+	var dbnames []string
 	sql = `select datname from pg_catalog.pg_database;`
 
 	rows, err = conn.Query(sql)
@@ -111,14 +136,17 @@ func pgSelectExisting() (map[string]User, error) {
 		if dbname == "template0" {
 			continue
 		}
+		dbnames = append(dbnames, dbname)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errors.WithStack(err)
+	}
 
+	for _, dbname := range dbnames {
 		err := pgSelectExistingDB(config, dbname, out)
 		if err != nil {
 			return nil, err
 		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, errors.WithStack(err)
 	}
 	return out, nil
 }
@@ -126,11 +154,10 @@ func pgSelectExisting() (map[string]User, error) {
 func pgSelectExistingDB(config pgx.ConnConfig, dbname string, out map[string]User) error {
 	config.Database = dbname
 
-	conn, err := pgx.Connect(config)
+	conn, err := pgConn(config)
 	if err != nil {
-		return errors.WithStack(err)
+		return err
 	}
-	defer conn.Close()
 
 	sql := `select
 		n.nspname,
@@ -177,13 +204,14 @@ func pgSelectExistingDB(config pgx.ConnConfig, dbname string, out map[string]Use
 				continue
 			}
 			if out[acl.Role].Grants[dbname] == nil {
-				out[acl.Role].Grants[dbname] = map[string]Grants{}
+				out[acl.Role].Grants[dbname] = map[string]map[string]Perm{}
 			}
-			g := out[acl.Role].Grants[dbname][r.name]
-			if acl.Select {
-				g.Select = true
+			if out[acl.Role].Grants[dbname][r.name] == nil {
+				out[acl.Role].Grants[dbname][r.name] = map[string]Perm{}
 			}
-			out[acl.Role].Grants[dbname][r.name] = g
+			for _, p := range acl.Perms {
+				out[acl.Role].Grants[dbname][r.name][p.Name] = p
+			}
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -210,37 +238,87 @@ func pgParseACL(input string) (pgACL, error) {
 		r.Role = "*"
 	}
 
+chars:
 	for _, ch := range chunks[1] {
-		switch ch {
-		case 'r':
-			r.Select = true
-		case 'w':
-			r.Update = true
-		case 'a':
-			r.Insert = true
-		case 'd':
-			r.Delete = true
-		case 'D':
-			r.Truncate = true
-		case 'x':
-			r.References = true
-		case 't':
-			r.Trigger = true
-		case 'X':
-			r.Execute = true
-		case 'U':
-			r.Usage = true
-		case 'C':
-			r.Create = true
-		case 'c':
-			r.Connect = true
-		case 'T':
-			r.Temporary = true
-		case '*':
-			r.Star = true
-		default:
-			return r, errors.Errorf("Unhandled privilege character %#v", ch)
+		for _, p := range Perms {
+			if p.Pg == string(ch) {
+				r.Perms = append(r.Perms, p)
+				continue chars
+			}
 		}
+		return r, errors.Errorf("Unhandled privilege character %#v", string(ch))
 	}
 	return r, nil
+}
+
+func pgPasswordHash(user, pw string) string {
+	if pw == "" {
+		return pw
+	}
+	if len(pw) == 35 && strings.HasPrefix(pw, "md5") {
+		return pw
+	}
+	return fmt.Sprintf("md5%x", md5.Sum([]byte(pw+user)))
+}
+
+var pgHolderRe = regexp.MustCompile(`\$\d+`)
+
+func pgReplace(sql string, params []interface{}) string {
+	return pgHolderRe.ReplaceAllStringFunc(sql, func(s string) string {
+		i, err := strconv.Atoi(s[1:])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "placeholder %#v parse error: %v\n", s, err)
+			return s
+		}
+		i--
+		if i < 0 || i+1 > len(params) {
+			fmt.Fprintf(os.Stderr, "placeholder %#v out of range\n", s)
+			return s
+		}
+		v := params[i]
+		switch vv := v.(type) {
+		case nil:
+			return "null"
+		case string:
+			return pgQuote(vv)
+		case int:
+			return strconv.Itoa(vv)
+		default:
+			fmt.Fprintf(os.Stderr, "placeholder %#v has unhandled type %T\n", s, v)
+			return s
+		}
+	})
+}
+
+func pgQuote(str string) string {
+	return "'" + strings.Replace(str, "'", "''", -1) + "'"
+}
+
+func pgExecMain(sql string, args ...interface{}) error {
+	return pgExec("postgres", sql, args...)
+}
+func pgExec(db string, sql string, args ...interface{}) error {
+
+	if db != lastPrintedDB {
+		fmt.Println("-- database " + db)
+		lastPrintedDB = db
+	}
+	fmt.Println(pgReplace(sql, args))
+
+	if dry {
+		return nil
+	}
+
+	config := pgx.ConnConfig{
+		User:     "postgres",
+		Database: db,
+	}
+
+	conn, err := pgConn(config)
+	if err != nil {
+		return err
+	}
+
+	_, err = conn.Exec(sql, args...)
+	return err
 }
