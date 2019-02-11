@@ -35,6 +35,7 @@ type pgACL struct {
 
 var pgConns = map[string]*pgx.Conn{}
 var lastPrintedDB = "postgres"
+var pgSafeIdent = regexp.MustCompile(`^[a-zA-Z]+[a-zA-Z0-9_]*$`)
 
 func pgConn(config pgx.ConnConfig) (*pgx.Conn, error) {
 	key := fmt.Sprintf("%s/%s/%s", config.User, config.Host, config.Database)
@@ -94,6 +95,9 @@ func pgSelectExisting() (map[string]User, error) {
 		if err != nil {
 			return nil, errors.WithStack(err)
 		}
+		if strings.ToLower(r.RolName) == "postgres" {
+			continue
+		}
 		if strings.HasPrefix(r.RolName, "pg_") {
 			continue
 		}
@@ -101,18 +105,17 @@ func pgSelectExisting() (map[string]User, error) {
 		if r.RolPassword != nil {
 			pass = *r.RolPassword
 		}
-		perms := map[string]Perm{}
+		grants := map[string]Perm{}
 		if r.RolSuper {
-			perms[Super.Name] = Super
+			grants[Super.Name] = Super
 		}
 		if r.RolCanLogin {
-			perms[Login.Name] = Login
+			grants[Login.Name] = Login
 		}
 		out[r.RolName] = User{
 			Name:     r.RolName,
 			Password: pass,
-			Grants:   map[string]map[string]map[string]Perm{},
-			Perms:    perms,
+			Grants:   grants,
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -122,36 +125,135 @@ func pgSelectExisting() (map[string]User, error) {
 	// Now go through each database, loading all the table permissions
 
 	var dbnames []string
-	sql = `select datname from pg_catalog.pg_database;`
+	sql = `select datname, datacl from pg_catalog.pg_database;`
 
 	rows, err = conn.Query(sql)
 	if err != nil {
 		return nil, err
 	}
 	for rows.Next() {
-		var dbname string
-		if err := rows.Scan(&dbname); err != nil {
+		var (
+			dbname string
+			dbacl  []string
+		)
+		if err := rows.Scan(&dbname, &dbacl); err != nil {
 			return nil, errors.WithStack(err)
 		}
 		if dbname == "template0" {
 			continue
 		}
 		dbnames = append(dbnames, dbname)
+
+		for _, rule := range dbacl {
+			acl, err := pgParseACL(rule, DatabasePerms)
+			if err != nil {
+				return nil, errors.Wrapf(err, "Database %#v ACL parse %#v", dbname, rule)
+			}
+			u, ok := out[acl.Role]
+			if !ok {
+				continue // skip permissions for users not in pg_roles (special users like postgres, pg_*, etc)
+			}
+			if u.Databases == nil {
+				u.Databases = map[string]Database{}
+			}
+			d := u.Databases[dbname]
+			d.Name = dbname
+			if d.Grants == nil {
+				d.Grants = map[string]Perm{}
+			}
+			for _, p := range acl.Perms {
+				d.Grants[p.Name] = p
+			}
+			u.Databases[dbname] = d
+			out[acl.Role] = u
+		}
+
 	}
 	if err := rows.Err(); err != nil {
 		return nil, errors.WithStack(err)
 	}
 
 	for _, dbname := range dbnames {
-		err := pgSelectExistingDB(config, dbname, out)
-		if err != nil {
+		if err := pgSelectExistingSchemas(config, dbname, out); err != nil {
+			return nil, err
+		}
+		if err := pgSelectExistingTables(config, dbname, out); err != nil {
 			return nil, err
 		}
 	}
 	return out, nil
 }
 
-func pgSelectExistingDB(config pgx.ConnConfig, dbname string, out map[string]User) error {
+func pgSelectExistingSchemas(config pgx.ConnConfig, dbname string, out map[string]User) error {
+	config.Database = dbname
+
+	conn, err := pgConn(config)
+	if err != nil {
+		return err
+	}
+
+	sql := `select
+		n.nspname,
+		n.nspacl
+from pg_catalog.pg_namespace as n;`
+
+	type rowtype struct {
+		schema string
+		acl    []string
+	}
+
+	rows, err := conn.Query(sql)
+	if err != nil {
+		return errors.WithStack(err)
+	}
+	for rows.Next() {
+		var r rowtype
+		err := rows.Scan(&r.schema, &r.acl)
+		if err != nil {
+			return errors.WithStack(err)
+		}
+
+		schemaname := r.schema
+
+		for _, rule := range r.acl {
+			acl, err := pgParseACL(rule, SchemaPerms)
+			if err != nil {
+				return errors.Wrapf(err, "Schema %#v ACL parse %#v", schemaname, rule)
+			}
+			u, ok := out[acl.Role]
+			if !ok {
+				continue // skip permissions for users not in pg_roles (special users like postgres, pg_*, etc)
+			}
+
+			if u.Databases == nil {
+				u.Databases = map[string]Database{}
+			}
+			d := out[acl.Role].Databases[dbname]
+			d.Name = dbname
+			if d.Schemas == nil {
+				d.Schemas = map[string]Schema{}
+			}
+			s := d.Schemas[schemaname]
+			s.Name = schemaname
+
+			if s.Grants == nil {
+				s.Grants = map[string]Perm{}
+			}
+			for _, p := range acl.Perms {
+				s.Grants[p.Name] = p
+			}
+			d.Schemas[schemaname] = s
+			u.Databases[dbname] = d
+		}
+
+	}
+	if err := rows.Err(); err != nil {
+		return errors.WithStack(err)
+	}
+
+	return nil
+}
+func pgSelectExistingTables(config pgx.ConnConfig, dbname string, out map[string]User) error {
 	config.Database = dbname
 
 	conn, err := pgConn(config)
@@ -186,33 +288,66 @@ func pgSelectExistingDB(config pgx.ConnConfig, dbname string, out map[string]Use
 		if err != nil {
 			return errors.WithStack(err)
 		}
-		// for now just look at tables
-		if r.kind != 'r' {
-			continue
-		}
 		if strings.HasPrefix(r.name, "pg_") || strings.HasPrefix(r.name, "sql_") {
 			continue
 		}
-		for _, rule := range r.acl {
-			acl, err := pgParseACL(rule)
-			if err != nil {
-				return errors.Wrapf(err, "ACL parse %#v", rule)
-			}
-			_, ok := out[acl.Role]
-			if !ok {
-				// skip permissions for users not in pg_roles
-				continue
-			}
-			if out[acl.Role].Grants[dbname] == nil {
-				out[acl.Role].Grants[dbname] = map[string]map[string]Perm{}
-			}
-			if out[acl.Role].Grants[dbname][r.name] == nil {
-				out[acl.Role].Grants[dbname][r.name] = map[string]Perm{}
-			}
-			for _, p := range acl.Perms {
-				out[acl.Role].Grants[dbname][r.name][p.Name] = p
+
+		schemaname := r.schema
+
+		// table
+		if r.kind == 'r' || r.kind == 'S' {
+			for _, rule := range r.acl {
+				acl, err := pgParseACL(rule, TablePerms, SequencePerms)
+				if err != nil {
+					return errors.Wrapf(err, "pg_class entry %#v ACL parse %#v", r.name, rule)
+				}
+				u, ok := out[acl.Role]
+				if !ok {
+					continue // skip permissions for users not in pg_roles (special users like postgres, pg_*, etc)
+				}
+
+				if u.Databases == nil {
+					u.Databases = map[string]Database{}
+				}
+				d := out[acl.Role].Databases[dbname]
+				d.Name = dbname
+				if d.Schemas == nil {
+					d.Schemas = map[string]Schema{}
+				}
+				s := d.Schemas[schemaname]
+				s.Name = schemaname
+				if r.kind == 'r' {
+					tablename := r.name
+					if s.Tables == nil {
+						s.Tables = map[string]Table{}
+					}
+					t := s.Tables[tablename]
+					if t.Grants == nil {
+						t.Grants = map[string]Perm{}
+					}
+					for _, p := range acl.Perms {
+						t.Grants[p.Name] = p
+					}
+					s.Tables[tablename] = t
+				} else if r.kind == 'S' {
+					sequencename := r.name
+					if s.Sequences == nil {
+						s.Sequences = map[string]Sequence{}
+					}
+					seq := s.Sequences[sequencename]
+					if seq.Grants == nil {
+						seq.Grants = map[string]Perm{}
+					}
+					for _, p := range acl.Perms {
+						seq.Grants[p.Name] = p
+					}
+					s.Sequences[sequencename] = seq
+				}
+				d.Schemas[schemaname] = s
+				u.Databases[dbname] = d
 			}
 		}
+
 	}
 	if err := rows.Err(); err != nil {
 		return errors.WithStack(err)
@@ -221,7 +356,7 @@ func pgSelectExistingDB(config pgx.ConnConfig, dbname string, out map[string]Use
 	return nil
 }
 
-func pgParseACL(input string) (pgACL, error) {
+func pgParseACL(input string, permlist ...[]Perm) (pgACL, error) {
 	var r pgACL
 
 	chunks := strings.Split(input, "/")
@@ -234,16 +369,14 @@ func pgParseACL(input string) (pgACL, error) {
 		return r, errors.New("Expected one equals sign")
 	}
 	r.Role = chunks[0]
-	if r.Role == "" {
-		r.Role = "*"
-	}
-
 chars:
 	for _, ch := range chunks[1] {
-		for _, p := range Perms {
-			if p.Pg == string(ch) {
-				r.Perms = append(r.Perms, p)
-				continue chars
+		for _, p := range permlist {
+			for _, pp := range p {
+				if pp.Pg == string(ch) {
+					r.Perms = append(r.Perms, pp)
+					continue chars
+				}
 			}
 		}
 		return r, errors.Errorf("Unhandled privilege character %#v", string(ch))
@@ -293,11 +426,21 @@ func pgReplace(sql string, params []interface{}) string {
 func pgQuote(str string) string {
 	return "'" + strings.Replace(str, "'", "''", -1) + "'"
 }
+func pgQuoteIdent(str string) string {
+	if pgSafeIdent.MatchString(str) {
+		return str
+	}
+	return "\"" + strings.Replace(str, "\"", "\"\"", -1) + "\""
+}
+func pgQuoteIdentPair(a, b string) string {
+	return pgQuoteIdent(a) + "." + pgQuoteIdent(b)
+}
 
 func pgExecMain(sql string, args ...interface{}) error {
 	return pgExec("postgres", sql, args...)
 }
 func pgExec(db string, sql string, args ...interface{}) error {
+	defer timer(pgReplace(sql, args)).done()
 
 	if db != lastPrintedDB {
 		fmt.Println("-- database " + db)

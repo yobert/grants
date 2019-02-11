@@ -5,27 +5,53 @@ import (
 )
 
 type User struct {
-	Name     string
-	Password string
-
-	// database -> table -> perm name -> perm
-	Grants map[string]map[string]map[string]Perm
-
-	// user-level permissions such as SUPER and LOGIN
-	Perms map[string]Perm
+	Name      string
+	Password  string
+	Grants    Grants
+	Databases map[string]Database
 }
+type Database struct {
+	Name    string
+	Grants  Grants
+	Schemas map[string]Schema
+}
+type Schema struct {
+	Name      string
+	Grants    Grants
+	Tables    map[string]Table
+	Sequences map[string]Sequence
+}
+type Table struct {
+	Name   string
+	Grants Grants
+	// later: columns
+}
+type Sequence struct {
+	Name   string
+	Grants Grants
+}
+type Grants map[string]Perm
 
 func (u User) Print() {
 	fmt.Printf("user %#v password %#v\n", u.Name, u.Password)
-	for _, p := range u.Perms {
+	for _, p := range u.Grants {
 		fmt.Println("\t» " + p.Name)
 	}
-	for dbname, tables := range u.Grants {
+	for dbname, db := range u.Databases {
 		fmt.Println("\t" + dbname)
-		for tablename, grants := range tables {
-			fmt.Println("\t\t" + tablename)
-			for _, perm := range grants {
-				fmt.Println("\t\t\t" + perm.String())
+		for _, p := range db.Grants {
+			fmt.Println("\t» " + p.Name)
+		}
+		for schemaname, schema := range db.Schemas {
+			fmt.Println("\t\t" + schemaname)
+			for _, p := range schema.Grants {
+				fmt.Println("\t\t» " + p.Name)
+			}
+			for tablename, table := range schema.Tables {
+				fmt.Println("\t\t\t" + tablename)
+				for _, p := range table.Grants {
+					fmt.Println("\t\t\t» " + p.Name)
+				}
 			}
 		}
 	}

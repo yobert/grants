@@ -5,17 +5,15 @@ import (
 	"time"
 )
 
-const debugTiming = false
-
 type timerType struct {
 	title string
 	time  time.Time
 }
 
 func (t timerType) done() {
-	if debugTiming {
+	if debug {
 		dur := time.Since(t.time)
-		fmt.Printf("%12s │ %s\n", format_dur(dur), t.title)
+		fmt.Printf("%12s │ %s\n", formatDur(dur), t.title)
 	}
 }
 
@@ -26,7 +24,7 @@ func timer(title string) timerType {
 	}
 }
 
-func format_dur(d time.Duration) string {
+func formatDur(d time.Duration) string {
 	if d > time.Second*10 {
 		d = d.Truncate(time.Second)
 	} else if d > time.Millisecond*10 {

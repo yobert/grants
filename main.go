@@ -5,25 +5,32 @@ import (
 	"os"
 	"sort"
 	"strings"
+
+	"github.com/pkg/errors"
 )
 
-const debug = false
-
-var dry = false
+var (
+	debug = false
+	dry   = false
+)
 
 func main() {
-	if err := main_run(); err != nil {
+	if err := mainRun(); err != nil {
 		printErr(err)
 		os.Exit(1)
 	}
 }
 
-func main_run() error {
+func mainRun() error {
 	var inputs []Input
 
 	for _, inpath := range os.Args[1:] {
 		if inpath == "-n" || inpath == "--dry" {
 			dry = true
+			continue
+		}
+		if inpath == "-d" || inpath == "--debug" {
+			debug = true
 			continue
 		}
 		if strings.HasPrefix(inpath, "-") {
@@ -35,6 +42,7 @@ Options:
 
   -h, --help:  Display this help
   -n, --dry:   Dry run (display SQL only)
+  -d, --debug: Also print debug output
 
 Input file syntax:
 
@@ -42,21 +50,34 @@ users:
   myuser:
     password: supersecret
     grants:
+      - LOGIN
+    databases:
       mydatabase:
-        mytable:
-          - SELECT
-          - INSERT
-          - UPDATE
+        grants:
+          - CONNECT
+        schemas:
+          public:
+            grants:
+              - USAGE
+            tables:
+              sometable:
+                grants:
+                  - SELECT
+                  - INSERT
+                  - UDPATE
+            sequences:
+              sometable_id_seq:
+                grants:
+                  - USAGE
 
   mysuperuser:
     password: evenmoresecret
-    flags:
-      - superuser
+    grants:
+      - SUPERUSER
 
   # user with blank or missing password will be dropped.
   usertobedropped:
-    password:
-`)
+    password:`)
 			os.Exit(1)
 		}
 
@@ -97,6 +118,10 @@ users:
 			continue
 		}
 
+		if strings.ToLower(name) == "postgres" {
+			return errors.Errorf("Managing role %#v isn't safe with a tool. Revoking superuser could be catastrophic for your database", name)
+		}
+
 		if debug {
 			fmt.Println("--", name, "--")
 			fmt.Print("old: ")
@@ -109,7 +134,7 @@ users:
 		h2 := pgPasswordHash(name, olduser.Password)
 
 		if olduser.Name == "" && newuser.Password != "" {
-			if err := pgExecMain("CREATE ROLE " + name + ";"); err != nil {
+			if err := pgExecMain("CREATE ROLE " + pgQuoteIdent(name) + ";"); err != nil {
 				return err
 			}
 		}
@@ -117,76 +142,176 @@ users:
 		// If the user is to be dropped, consider all permissions "revoked"
 		if newuser.Password == "" {
 			newuser.Grants = nil
-			newuser.Perms = nil
+			newuser.Databases = nil
 		}
 
 		// password changes
 		if h1 != h2 {
 			if h1 == "" && h2 != "" {
-				if err := pgExecMain("ALTER USER " + name + " WITH PASSWORD NULL;"); err != nil {
+				if err := pgExecMain("ALTER USER " + pgQuoteIdent(name) + " WITH PASSWORD NULL;"); err != nil {
 					return err
 				}
 			} else {
-				if err := pgExecMain("ALTER USER " + name + " WITH PASSWORD " + pgQuote(h1) + ";"); err != nil {
+				if err := pgExecMain("ALTER USER " + pgQuoteIdent(name) + " WITH PASSWORD " + pgQuote(h1) + ";"); err != nil {
 					return err
 				}
 			}
 		}
 
 		// revoke user attributes
-		for _, p := range olduser.Perms {
+		for _, p := range olduser.Grants {
 			ok := false
-			if newuser.Perms != nil {
-				_, ok = newuser.Perms[p.Name]
+			if newuser.Grants != nil {
+				_, ok = newuser.Grants[p.Name]
 			}
 			if !ok {
-				if err := pgExecMain("ALTER USER " + name + " WITH NO" + p.Name + ";"); err != nil {
+				if err := pgExecMain("ALTER USER " + pgQuoteIdent(name) + " WITH NO" + p.Name + ";"); err != nil {
 					return err
 				}
 			}
 		}
 
 		// grant user attributes
-		for _, p := range newuser.Perms {
+		for _, p := range newuser.Grants {
 			ok := false
-			if olduser.Perms != nil {
-				_, ok = olduser.Perms[p.Name]
+			if olduser.Grants != nil {
+				_, ok = olduser.Grants[p.Name]
 			}
 			if !ok {
-				if err := pgExecMain("ALTER USER " + name + " WITH " + p.Name + ";"); err != nil {
+				if err := pgExecMain("ALTER USER " + pgQuoteIdent(name) + " WITH " + p.Name + ";"); err != nil {
 					return err
 				}
 			}
 		}
 
-		// revoke table permissions
-		for dbname, tables := range olduser.Grants {
-			for tablename, grants := range tables {
-				for _, p := range grants {
+		// revoke
+		for dbname, db := range olduser.Databases {
+			// database
+			for _, p := range db.Grants {
+				ok := false
+				if newuser.Databases != nil &&
+					newuser.Databases[dbname].Grants != nil {
+					_, ok = newuser.Databases[dbname].Grants[p.Name]
+				}
+				if !ok {
+					if err := pgExecMain("REVOKE " + p.Name + " ON DATABASE " + pgQuoteIdent(dbname) + " FROM " + pgQuoteIdent(name) + ";"); err != nil {
+						return err
+					}
+				}
+			}
+			for schemaname, schema := range db.Schemas {
+				// schema
+				for _, p := range schema.Grants {
 					ok := false
-					if newuser.Grants != nil && newuser.Grants[dbname] != nil && newuser.Grants[dbname][tablename] != nil {
-						_, ok = newuser.Grants[dbname][tablename][p.Name]
+					if newuser.Databases != nil &&
+						newuser.Databases[dbname].Schemas != nil &&
+						newuser.Databases[dbname].Schemas[schemaname].Grants != nil {
+						_, ok = newuser.Databases[dbname].Schemas[schemaname].Grants[p.Name]
 					}
 					if !ok {
-						if err := pgExec(dbname, "REVOKE "+p.Name+" ON TABLE "+tablename+" FROM "+name+";"); err != nil {
+						if err := pgExec(dbname, "REVOKE "+p.Name+" ON SCHEMA "+pgQuoteIdent(schemaname)+" FROM "+pgQuoteIdent(name)+";"); err != nil {
 							return err
+						}
+					}
+				}
+				for tablename, table := range schema.Tables {
+					// table
+					for _, p := range table.Grants {
+						ok := false
+						if newuser.Databases != nil &&
+							newuser.Databases[dbname].Schemas != nil &&
+							newuser.Databases[dbname].Schemas[schemaname].Tables != nil &&
+							newuser.Databases[dbname].Schemas[schemaname].Tables[tablename].Grants != nil {
+							_, ok = newuser.Databases[dbname].Schemas[schemaname].Tables[tablename].Grants[p.Name]
+						}
+						if !ok {
+							if err := pgExec(dbname, "REVOKE "+p.Name+" ON TABLE "+pgQuoteIdentPair(schemaname, tablename)+" FROM "+pgQuoteIdent(name)+";"); err != nil {
+								return err
+							}
+						}
+					}
+				}
+				for sequencename, sequence := range schema.Sequences {
+					// sequence
+					for _, p := range sequence.Grants {
+						ok := false
+						if newuser.Databases != nil &&
+							newuser.Databases[dbname].Schemas != nil &&
+							newuser.Databases[dbname].Schemas[schemaname].Sequences != nil &&
+							newuser.Databases[dbname].Schemas[schemaname].Sequences[sequencename].Grants != nil {
+							_, ok = newuser.Databases[dbname].Schemas[schemaname].Sequences[sequencename].Grants[p.Name]
+						}
+						if !ok {
+							if err := pgExec(dbname, "REVOKE "+p.Name+" ON SEQUENCE "+pgQuoteIdentPair(schemaname, sequencename)+" FROM "+pgQuoteIdent(name)+";"); err != nil {
+								return err
+							}
 						}
 					}
 				}
 			}
 		}
 
-		// grant table permissions
-		for dbname, tables := range newuser.Grants {
-			for tablename, grants := range tables {
-				for _, p := range grants {
+		// grant
+		for dbname, db := range newuser.Databases {
+			// database
+			for _, p := range db.Grants {
+				ok := false
+				if olduser.Databases != nil &&
+					olduser.Databases[dbname].Grants != nil {
+					_, ok = olduser.Databases[dbname].Grants[p.Name]
+				}
+				if !ok {
+					if err := pgExecMain("GRANT " + p.Name + " ON DATABASE " + pgQuoteIdent(dbname) + " TO " + pgQuoteIdent(name) + ";"); err != nil {
+						return err
+					}
+				}
+			}
+			for schemaname, schema := range db.Schemas {
+				// schema
+				for _, p := range schema.Grants {
 					ok := false
-					if olduser.Grants != nil && olduser.Grants[dbname] != nil && olduser.Grants[dbname][tablename] != nil {
-						_, ok = olduser.Grants[dbname][tablename][p.Name]
+					if olduser.Databases != nil &&
+						olduser.Databases[dbname].Schemas != nil &&
+						olduser.Databases[dbname].Schemas[schemaname].Grants != nil {
+						_, ok = olduser.Databases[dbname].Schemas[schemaname].Grants[p.Name]
 					}
 					if !ok {
-						if err := pgExec(dbname, "GRANT "+p.Name+" ON TABLE "+tablename+" TO "+name+";"); err != nil {
+						if err := pgExec(dbname, "GRANT "+p.Name+" ON SCHEMA "+pgQuoteIdent(schemaname)+" TO "+pgQuoteIdent(name)+";"); err != nil {
 							return err
+						}
+					}
+				}
+				for tablename, table := range schema.Tables {
+					// table
+					for _, p := range table.Grants {
+						ok := false
+						if olduser.Databases != nil &&
+							olduser.Databases[dbname].Schemas != nil &&
+							olduser.Databases[dbname].Schemas[schemaname].Tables != nil &&
+							olduser.Databases[dbname].Schemas[schemaname].Tables[tablename].Grants != nil {
+							_, ok = olduser.Databases[dbname].Schemas[schemaname].Tables[tablename].Grants[p.Name]
+						}
+						if !ok {
+							if err := pgExec(dbname, "GRANT "+p.Name+" ON TABLE "+pgQuoteIdentPair(schemaname, tablename)+" TO "+pgQuoteIdent(name)+";"); err != nil {
+								return err
+							}
+						}
+					}
+				}
+				for sequencename, sequence := range schema.Sequences {
+					// sequence
+					for _, p := range sequence.Grants {
+						ok := false
+						if olduser.Databases != nil &&
+							olduser.Databases[dbname].Schemas != nil &&
+							olduser.Databases[dbname].Schemas[schemaname].Sequences != nil &&
+							olduser.Databases[dbname].Schemas[schemaname].Sequences[sequencename].Grants != nil {
+							_, ok = olduser.Databases[dbname].Schemas[schemaname].Sequences[sequencename].Grants[p.Name]
+						}
+						if !ok {
+							if err := pgExec(dbname, "GRANT "+p.Name+" ON SEQUENCE "+pgQuoteIdentPair(schemaname, sequencename)+" TO "+pgQuoteIdent(name)+";"); err != nil {
+								return err
+							}
 						}
 					}
 				}
@@ -195,7 +320,7 @@ users:
 
 		// drop users
 		if olduser.Name != "" && newuser.Password == "" {
-			if err := pgExecMain("DROP ROLE " + name + ";"); err != nil {
+			if err := pgExecMain("DROP ROLE " + pgQuoteIdent(name) + ";"); err != nil {
 				return err
 			}
 		}
