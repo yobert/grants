@@ -225,7 +225,11 @@ users:
 							_, ok = newuser.Databases[dbname].Schemas[schemaname].Tables[tablename].Grants[p.Name]
 						}
 						if !ok {
-							if err := pgExec(dbname, "REVOKE "+p.Name+" ON TABLE "+pgQuoteIdentPair(schemaname, tablename)+" FROM "+pgQuoteIdent(name)+";"); err != nil {
+							sql := "REVOKE " + p.Name + " ON TABLE " + pgQuoteIdentPair(schemaname, tablename) + " FROM " + pgQuoteIdent(name) + ";"
+							if tablename == pgDefaultMarker {
+								sql = "ALTER DEFAULT PRIVILEGES FOR ROLE " + pgQuoteIdent(pgDefaultAssumeRole) + " IN SCHEMA " + pgQuoteIdent(schemaname) + " REVOKE " + p.Name + " ON TABLES FROM " + pgQuoteIdent(name) + ";"
+							}
+							if err := pgExec(dbname, sql); err != nil {
 								return err
 							}
 						}
@@ -242,7 +246,11 @@ users:
 							_, ok = newuser.Databases[dbname].Schemas[schemaname].Sequences[sequencename].Grants[p.Name]
 						}
 						if !ok {
-							if err := pgExec(dbname, "REVOKE "+p.Name+" ON SEQUENCE "+pgQuoteIdentPair(schemaname, sequencename)+" FROM "+pgQuoteIdent(name)+";"); err != nil {
+							sql := "REVOKE " + p.Name + " ON SEQUENCE " + pgQuoteIdentPair(schemaname, sequencename) + " FROM " + pgQuoteIdent(name) + ";"
+							if sequencename == pgDefaultMarker {
+								sql = "ALTER DEFAULT PRIVILEGES FOR ROLE " + pgQuoteIdent(pgDefaultAssumeRole) + " IN SCHEMA " + pgQuoteIdent(schemaname) + " REVOKE " + p.Name + " ON SEQUENCES FROM " + pgQuoteIdent(name) + ";"
+							}
+							if err := pgExec(dbname, sql); err != nil {
 								return err
 							}
 						}
@@ -292,7 +300,11 @@ users:
 							_, ok = olduser.Databases[dbname].Schemas[schemaname].Tables[tablename].Grants[p.Name]
 						}
 						if !ok {
-							if err := pgExec(dbname, "GRANT "+p.Name+" ON TABLE "+pgQuoteIdentPair(schemaname, tablename)+" TO "+pgQuoteIdent(name)+";"); err != nil {
+							sql := "GRANT " + p.Name + " ON TABLE " + pgQuoteIdentPair(schemaname, tablename) + " TO " + pgQuoteIdent(name) + ";"
+							if tablename == pgDefaultMarker {
+								sql = "ALTER DEFAULT PRIVILEGES FOR ROLE " + pgQuoteIdent(pgDefaultAssumeRole) + " IN SCHEMA " + pgQuoteIdent(schemaname) + " GRANT " + p.Name + " ON TABLES TO " + pgQuoteIdent(name) + ";"
+							}
+							if err := pgExec(dbname, sql); err != nil {
 								return err
 							}
 						}
@@ -309,7 +321,11 @@ users:
 							_, ok = olduser.Databases[dbname].Schemas[schemaname].Sequences[sequencename].Grants[p.Name]
 						}
 						if !ok {
-							if err := pgExec(dbname, "GRANT "+p.Name+" ON SEQUENCE "+pgQuoteIdentPair(schemaname, sequencename)+" TO "+pgQuoteIdent(name)+";"); err != nil {
+							sql := "GRANT " + p.Name + " ON SEQUENCE " + pgQuoteIdentPair(schemaname, sequencename) + " TO " + pgQuoteIdent(name) + ";"
+							if sequencename == pgDefaultMarker {
+								sql = "ALTER DEFAULT PRIVILEGES FOR ROLE " + pgQuoteIdent(pgDefaultAssumeRole) + " IN SCHEMA " + pgQuoteIdent(schemaname) + " GRANT " + p.Name + " ON SEQUENCES TO " + pgQuoteIdent(name) + ";"
+							}
+							if err := pgExec(dbname, sql); err != nil {
 								return err
 							}
 						}

@@ -12,6 +12,11 @@ import (
 	"github.com/pkg/errors"
 )
 
+const (
+	pgDefaultMarker     = "*"
+	pgDefaultAssumeRole = "postgres"
+)
+
 type pgRole struct {
 	RolName        string
 	RolSuper       bool
@@ -177,7 +182,10 @@ func pgSelectExisting() (map[string]User, error) {
 		if err := pgSelectExistingSchemas(config, dbname, out); err != nil {
 			return nil, err
 		}
-		if err := pgSelectExistingTables(config, dbname, out); err != nil {
+		if err := pgSelectExistingTableish(config, dbname, out); err != nil {
+			return nil, err
+		}
+		if err := pgSelectExistingDefaults(config, dbname, out); err != nil {
 			return nil, err
 		}
 	}
@@ -253,7 +261,7 @@ from pg_catalog.pg_namespace as n;`
 
 	return nil
 }
-func pgSelectExistingTables(config pgx.ConnConfig, dbname string, out map[string]User) error {
+func pgSelectExistingTableish(config pgx.ConnConfig, dbname string, out map[string]User) error {
 	config.Database = dbname
 
 	conn, err := pgConn(config)
@@ -269,7 +277,7 @@ func pgSelectExistingTables(config pgx.ConnConfig, dbname string, out map[string
 	from pg_class as c
 	left join pg_catalog.pg_namespace as n on
 		n.oid = c.relnamespace
-	where c.relkind in ('r', 'S', 'v', 'm');`
+	where c.relkind in ('r', 'S');`
 
 	type rowtype struct {
 		schema string
@@ -294,7 +302,7 @@ func pgSelectExistingTables(config pgx.ConnConfig, dbname string, out map[string
 
 		schemaname := r.schema
 
-		// table
+		// table or sequence
 		if r.kind == 'r' || r.kind == 'S' {
 			for _, rule := range r.acl {
 				acl, err := pgParseACL(rule, TablePerms, SequencePerms)
@@ -342,6 +350,121 @@ func pgSelectExistingTables(config pgx.ConnConfig, dbname string, out map[string
 						seq.Grants[p.Name] = p
 					}
 					s.Sequences[sequencename] = seq
+				} else {
+					return errors.Errorf("Unhandled access privilege kind %#v for role %#v", r.kind, acl.Role)
+				}
+				d.Schemas[schemaname] = s
+				u.Databases[dbname] = d
+			}
+		}
+
+	}
+	if err := rows.Err(); err != nil {
+		return errors.WithStack(err)
+	}
+
+	return nil
+}
+
+func pgSelectExistingDefaults(config pgx.ConnConfig, dbname string, out map[string]User) error {
+	config.Database = dbname
+
+	conn, err := pgConn(config)
+	if err != nil {
+		return err
+	}
+
+	sql := `select
+		r.rolname,
+		n.nspname,
+		d.defaclobjtype,
+		d.defaclacl
+from pg_catalog.pg_default_acl as d
+left join pg_catalog.pg_roles as r on
+	r.oid = d.defaclrole
+left join pg_catalog.pg_namespace as n on
+	n.oid = d.defaclnamespace
+where
+	d.defaclobjtype in ('r', 'S');`
+
+	type rowtype struct {
+		name   string
+		schema string
+		kind   rune
+		acl    []string
+	}
+
+	rows, err := conn.Query(sql)
+	if err != nil {
+		return errors.WithStack(err)
+	}
+	for rows.Next() {
+		var r rowtype
+		err := rows.Scan(&r.name, &r.schema, &r.kind, &r.acl)
+		if err != nil {
+			return errors.WithStack(err)
+		}
+
+		// For now, we're only going to manage default rules for a single user (postgres).
+		// I'm not sure how to squish multi-user into the input syntax yet.
+		// This means that default permissions will only work if postgres is the user creating things,
+		// which I think is a pretty safe assumption for now.
+		if r.name != pgDefaultAssumeRole {
+			continue
+		}
+
+		schemaname := r.schema
+
+		// table or sequence
+		if r.kind == 'r' || r.kind == 'S' {
+			for _, rule := range r.acl {
+				acl, err := pgParseACL(rule, TablePerms, SequencePerms)
+				if err != nil {
+					return errors.Wrapf(err, "default acl %#v kind %#v ACL parse %#v", r.schema, r.kind, rule)
+				}
+				u, ok := out[acl.Role]
+				if !ok {
+					continue // skip permissions for users not in pg_roles (special users like postgres, pg_*, etc)
+				}
+
+				if u.Databases == nil {
+					u.Databases = map[string]Database{}
+				}
+				d := out[acl.Role].Databases[dbname]
+				d.Name = dbname
+				if d.Schemas == nil {
+					d.Schemas = map[string]Schema{}
+				}
+				s := d.Schemas[schemaname]
+				s.Name = schemaname
+				if r.kind == 'r' {
+					tablename := pgDefaultMarker
+					if s.Tables == nil {
+						s.Tables = map[string]Table{}
+					}
+					t := s.Tables[tablename]
+					if t.Grants == nil {
+						t.Grants = map[string]Perm{}
+					}
+					for _, p := range acl.Perms {
+						t.Grants[p.Name] = p
+					}
+					s.Tables[tablename] = t
+				} else if r.kind == 'S' {
+					sequencename := pgDefaultMarker
+					if s.Sequences == nil {
+						s.Sequences = map[string]Sequence{}
+					}
+					seq := s.Sequences[sequencename]
+					if seq.Grants == nil {
+						seq.Grants = map[string]Perm{}
+					}
+					for _, p := range acl.Perms {
+						seq.Grants[p.Name] = p
+					}
+					s.Sequences[sequencename] = seq
+				} else {
+					return errors.Errorf("Unhandled default access privilege kind %#v for role %#v", r.kind, acl.Role)
 				}
 				d.Schemas[schemaname] = s
 				u.Databases[dbname] = d
