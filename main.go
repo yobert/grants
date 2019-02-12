@@ -92,9 +92,46 @@ users:
 		return err
 	}
 
-	oldusers, err := pgSelectExisting()
+	oldusers, existing, err := pgSelectExisting()
 	if err != nil {
 		return err
+	}
+
+	// expand out grants for "*"
+	for name, user := range newusers {
+		for dbname, db := range user.Databases {
+			for schemaname, schema := range db.Schemas {
+				if schema.Tables != nil && existing[dbname].Schemas != nil {
+					for tablename := range existing[dbname].Schemas[schemaname].Tables {
+						t := schema.Tables[tablename]
+						t.Name = tablename
+						if t.Grants == nil {
+							t.Grants = map[string]Perm{}
+						}
+						for _, p := range schema.Tables[pgDefaultMarker].Grants {
+							t.Grants[p.Name] = p
+						}
+						schema.Tables[tablename] = t
+					}
+				}
+				if schema.Sequences != nil && existing[dbname].Schemas != nil {
+					for sequencename := range existing[dbname].Schemas[schemaname].Sequences {
+						seq := schema.Sequences[sequencename]
+						seq.Name = sequencename
+						if seq.Grants == nil {
+							seq.Grants = map[string]Perm{}
+						}
+						for _, p := range schema.Sequences[pgDefaultMarker].Grants {
+							seq.Grants[p.Name] = p
+						}
+						schema.Sequences[sequencename] = seq
+					}
+				}
+				db.Schemas[schemaname] = schema
+			}
+			user.Databases[dbname] = db
+		}
+		newusers[name] = user
 	}
 
 	var names []string

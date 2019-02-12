@@ -58,14 +58,15 @@ func pgConn(config pgx.ConnConfig) (*pgx.Conn, error) {
 	return c, nil
 }
 
-func pgSelectExisting() (map[string]User, error) {
+func pgSelectExisting() (map[string]User, map[string]Database, error) {
 	defer timer("select existing grants").done()
 
 	// Postgres is a little weird in now it splits out databases. We can query the database list,
 	// but cannot query user permissions across databases from a single connection as far as I can tell.
 	// So we loop through all the databases, and build up our data from there.
 
-	out := map[string]User{}
+	out := map[string]User{}          // existing user and default permissions
+	existing := map[string]Database{} // existing databases/schemas/tables/etc (so we can apply "*")
 
 	config := pgx.ConnConfig{
 		User:     "postgres",
@@ -74,7 +75,7 @@ func pgSelectExisting() (map[string]User, error) {
 
 	conn, err := pgConn(config)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Load every user (role). This list is the same no matter what database we connect to.
@@ -88,7 +89,7 @@ func pgSelectExisting() (map[string]User, error) {
 
 	rows, err := conn.Query(sql)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for rows.Next() {
 		var r pgRole
@@ -98,7 +99,7 @@ func pgSelectExisting() (map[string]User, error) {
 			&r.RolBypassRLS, &r.RolConfig,
 		)
 		if err != nil {
-			return nil, errors.WithStack(err)
+			return nil, nil, errors.WithStack(err)
 		}
 		if strings.ToLower(r.RolName) == "postgres" {
 			continue
@@ -124,7 +125,7 @@ func pgSelectExisting() (map[string]User, error) {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, errors.WithStack(err)
+		return nil, nil, errors.WithStack(err)
 	}
 
 	// Now go through each database, loading all the table permissions
@@ -134,7 +135,7 @@ func pgSelectExisting() (map[string]User, error) {
 
 	rows, err = conn.Query(sql)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for rows.Next() {
 		var (
@@ -142,17 +143,22 @@ func pgSelectExisting() (map[string]User, error) {
 			dbacl  []string
 		)
 		if err := rows.Scan(&dbname, &dbacl); err != nil {
-			return nil, errors.WithStack(err)
+			return nil, nil, errors.WithStack(err)
 		}
 		if dbname == "template0" {
 			continue
 		}
 		dbnames = append(dbnames, dbname)
 
+		existing[dbname] = Database{
+			Name:    dbname,
+			Schemas: map[string]Schema{},
+		}
+
 		for _, rule := range dbacl {
 			acl, err := pgParseACL(rule, DatabasePerms)
 			if err != nil {
-				return nil, errors.Wrapf(err, "Database %#v ACL parse %#v", dbname, rule)
+				return nil, nil, errors.Wrapf(err, "Database %#v ACL parse %#v", dbname, rule)
 			}
 			u, ok := out[acl.Role]
 			if !ok {
@@ -175,24 +181,24 @@ func pgSelectExisting() (map[string]User, error) {
 
 	}
 	if err := rows.Err(); err != nil {
-		return nil, errors.WithStack(err)
+		return nil, nil, errors.WithStack(err)
 	}
 
 	for _, dbname := range dbnames {
-		if err := pgSelectExistingSchemas(config, dbname, out); err != nil {
-			return nil, err
+		if err := pgSelectExistingSchemas(config, dbname, out, existing); err != nil {
+			return nil, nil, err
 		}
-		if err := pgSelectExistingTableish(config, dbname, out); err != nil {
-			return nil, err
+		if err := pgSelectExistingTableish(config, dbname, out, existing); err != nil {
+			return nil, nil, err
 		}
 		if err := pgSelectExistingDefaults(config, dbname, out); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
-	return out, nil
+	return out, existing, nil
 }
 
-func pgSelectExistingSchemas(config pgx.ConnConfig, dbname string, out map[string]User) error {
+func pgSelectExistingSchemas(config pgx.ConnConfig, dbname string, out map[string]User, existing map[string]Database) error {
 	config.Database = dbname
 
 	conn, err := pgConn(config)
@@ -222,6 +228,12 @@ from pg_catalog.pg_namespace as n;`
 		}
 
 		schemaname := r.schema
+
+		existing[dbname].Schemas[schemaname] = Schema{
+			Name:      schemaname,
+			Tables:    map[string]Table{},
+			Sequences: map[string]Sequence{},
+		}
 
 		for _, rule := range r.acl {
 			acl, err := pgParseACL(rule, SchemaPerms)
@@ -261,7 +273,7 @@ from pg_catalog.pg_namespace as n;`
 
 	return nil
 }
-func pgSelectExistingTableish(config pgx.ConnConfig, dbname string, out map[string]User) error {
+func pgSelectExistingTableish(config pgx.ConnConfig, dbname string, out map[string]User, existing map[string]Database) error {
 	config.Database = dbname
 
 	conn, err := pgConn(config)
@@ -301,6 +313,16 @@ func pgSelectExistingTableish(config pgx.ConnConfig, dbname string, out map[stri
 		}
 
 		schemaname := r.schema
+
+		if r.kind == 'r' {
+			existing[dbname].Schemas[schemaname].Tables[r.name] = Table{
+				Name: r.name,
+			}
+		} else if r.kind == 'S' {
+			existing[dbname].Schemas[schemaname].Sequences[r.name] = Sequence{
+				Name: r.name,
+			}
+		}
 
 		// table or sequence
 		if r.kind == 'r' || r.kind == 'S' {
