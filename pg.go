@@ -59,7 +59,7 @@ func pgConn(config pgx.ConnConfig) (*pgx.Conn, error) {
 }
 
 func pgSelectExisting() (map[string]User, map[string]Database, error) {
-	defer timer("select existing grants").done()
+	defer timer("total query").done()
 
 	// Postgres is a little weird in now it splits out databases. We can query the database list,
 	// but cannot query user permissions across databases from a single connection as far as I can tell.
@@ -199,6 +199,7 @@ func pgSelectExisting() (map[string]User, map[string]Database, error) {
 }
 
 func pgSelectExistingSchemas(config pgx.ConnConfig, dbname string, out map[string]User, existing map[string]Database) error {
+	defer timer(dbname + " query schema").done()
 	config.Database = dbname
 
 	conn, err := pgConn(config)
@@ -274,6 +275,7 @@ from pg_catalog.pg_namespace as n;`
 	return nil
 }
 func pgSelectExistingTableish(config pgx.ConnConfig, dbname string, out map[string]User, existing map[string]Database) error {
+	defer timer(dbname + " query table acls").done()
 	config.Database = dbname
 
 	conn, err := pgConn(config)
@@ -389,6 +391,7 @@ func pgSelectExistingTableish(config pgx.ConnConfig, dbname string, out map[stri
 }
 
 func pgSelectExistingDefaults(config pgx.ConnConfig, dbname string, out map[string]User) error {
+	defer timer(dbname + " query default acl").done()
 	config.Database = dbname
 
 	conn, err := pgConn(config)
@@ -588,7 +591,7 @@ func pgExec(db string, sql string, args ...interface{}) error {
 	defer timer(pgReplace(sql, args)).done()
 
 	if db != lastPrintedDB {
-		fmt.Println("-- database " + db)
+		fmt.Println("\\connect " + pgQuoteIdent(db))
 		lastPrintedDB = db
 	}
 	fmt.Println(pgReplace(sql, args))

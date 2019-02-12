@@ -10,8 +10,9 @@ import (
 )
 
 var (
-	debug = false
-	dry   = false
+	debug  = false
+	timing = false
+	dry    = false
 )
 
 func main() {
@@ -22,6 +23,8 @@ func main() {
 }
 
 func mainRun() error {
+	defer timer("total").done()
+
 	var inputs []Input
 
 	for _, inpath := range os.Args[1:] {
@@ -33,6 +36,10 @@ func mainRun() error {
 			debug = true
 			continue
 		}
+		if inpath == "-t" || inpath == "--timing" {
+			timing = true
+			continue
+		}
 		if strings.HasPrefix(inpath, "-") {
 			fmt.Println(`Usage:
 
@@ -40,9 +47,10 @@ func mainRun() error {
 
 Options:
 
-  -h, --help:  Display this help
-  -n, --dry:   Dry run (display SQL only)
-  -d, --debug: Also print debug output
+  -h, --help:   Display this help
+  -n, --dry:    Dry run (display SQL only)
+  -d, --debug:  Also print debug output
+  -t, --timing: Print timings
 
 Input file syntax:
 
@@ -185,11 +193,11 @@ users:
 		// password changes
 		if h1 != h2 {
 			if h1 == "" && h2 != "" {
-				if err := pgExecMain("ALTER USER " + pgQuoteIdent(name) + " WITH PASSWORD NULL;"); err != nil {
+				if err := pgExecMain("ALTER ROLE " + pgQuoteIdent(name) + " WITH PASSWORD NULL;"); err != nil {
 					return err
 				}
 			} else {
-				if err := pgExecMain("ALTER USER " + pgQuoteIdent(name) + " WITH PASSWORD " + pgQuote(h1) + ";"); err != nil {
+				if err := pgExecMain("ALTER ROLE " + pgQuoteIdent(name) + " WITH PASSWORD " + pgQuote(h1) + ";"); err != nil {
 					return err
 				}
 			}
@@ -202,7 +210,7 @@ users:
 				_, ok = newuser.Grants[p.Name]
 			}
 			if !ok {
-				if err := pgExecMain("ALTER USER " + pgQuoteIdent(name) + " WITH NO" + p.Name + ";"); err != nil {
+				if err := pgExecMain("ALTER ROLE " + pgQuoteIdent(name) + " WITH NO" + p.Name + ";"); err != nil {
 					return err
 				}
 			}
@@ -215,7 +223,7 @@ users:
 				_, ok = olduser.Grants[p.Name]
 			}
 			if !ok {
-				if err := pgExecMain("ALTER USER " + pgQuoteIdent(name) + " WITH " + p.Name + ";"); err != nil {
+				if err := pgExecMain("ALTER ROLE " + pgQuoteIdent(name) + " WITH " + p.Name + ";"); err != nil {
 					return err
 				}
 			}

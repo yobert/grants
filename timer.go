@@ -11,7 +11,7 @@ type timerType struct {
 }
 
 func (t timerType) done() {
-	if debug {
+	if timing {
 		dur := time.Since(t.time)
 		fmt.Printf("%12s │ %s\n", formatDur(dur), t.title)
 	}
