@@ -28,7 +28,7 @@ type pgRole struct {
 	RolConnLimit   int
 	RolPassword    *string
 	RolValidUntil  *string
-	RolBypassRLS   bool
+	//RolBypassRLS   bool // pg 10 thing
 	RolConfig      []string
 }
 
@@ -82,7 +82,7 @@ func pgSelectExisting() (map[string]User, map[string]Database, error) {
 
 	sql := `select r.rolname, r.rolsuper, r.rolinherit, r.rolcreaterole, r.rolcreatedb,
                   r.rolcanlogin, r.rolreplication, r.rolconnlimit, s.passwd, r.rolvaliduntil,
-                  r.rolbypassrls, r.rolconfig
+                  r.rolconfig
            from pg_roles as r
            left join pg_shadow as s on
              r.rolname = s.usename;`
@@ -96,7 +96,7 @@ func pgSelectExisting() (map[string]User, map[string]Database, error) {
 		err := rows.Scan(
 			&r.RolName, &r.RolSuper, &r.RolInherit, &r.RolCreateRole, &r.RolCreateDB,
 			&r.RolCanLogin, &r.RolReplication, &r.RolConnLimit, &r.RolPassword, &r.RolValidUntil,
-			&r.RolBypassRLS, &r.RolConfig,
+			&r.RolConfig,
 		)
 		if err != nil {
 			return nil, nil, errors.WithStack(err)
