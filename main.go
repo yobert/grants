@@ -68,7 +68,7 @@ users:
             grants:
               - USAGE
             tables:
-              sometable:
+              sometable someothertable:
                 grants:
                   - SELECT
                   - INSERT
@@ -178,14 +178,15 @@ users:
 		h1 := pgPasswordHash(name, newuser.Password)
 		h2 := pgPasswordHash(name, olduser.Password)
 
-		if olduser.Name == "" && newuser.Password != "" {
+		// "public" is a special built-in role for postgres. We ignore that one.
+		if !olduser.Valid && newuser.Valid && name != "public" {
 			if err := pgExecMain("CREATE ROLE " + pgQuoteIdent(name) + ";"); err != nil {
 				return err
 			}
 		}
 
 		// If the user is to be dropped, consider all permissions "revoked"
-		if newuser.Password == "" {
+		if !newuser.Valid {
 			newuser.Grants = nil
 			newuser.Databases = nil
 		}
@@ -380,7 +381,8 @@ users:
 		}
 
 		// drop users
-		if olduser.Name != "" && newuser.Password == "" {
+		// "public" is a special built-in role for postgres. We ignore that one.
+		if olduser.Valid && !newuser.Valid && name != "public" {
 			if err := pgExecMain("DROP ROLE " + pgQuoteIdent(name) + ";"); err != nil {
 				return err
 			}

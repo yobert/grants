@@ -29,7 +29,7 @@ type pgRole struct {
 	RolPassword    *string
 	RolValidUntil  *string
 	//RolBypassRLS   bool // pg 10 thing
-	RolConfig      []string
+	RolConfig []string
 }
 
 type pgACL struct {
@@ -122,6 +122,7 @@ func pgSelectExisting() (map[string]User, map[string]Database, error) {
 			Name:     r.RolName,
 			Password: pass,
 			Grants:   grants,
+			Valid:    true,
 		}
 	}
 	if err := rows.Err(); err != nil {

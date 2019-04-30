@@ -9,6 +9,7 @@ type User struct {
 	Password  string
 	Grants    Grants
 	Databases map[string]Database
+	Valid     bool
 }
 type Database struct {
 	Name    string

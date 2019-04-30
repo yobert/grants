@@ -2,6 +2,7 @@ package main
 
 import (
 	"io/ioutil"
+	"strings"
 
 	"github.com/pkg/errors"
 	"gopkg.in/yaml.v2"
@@ -72,6 +73,7 @@ func mergeInputs(inputs []Input) (map[string]User, error) {
 				for _, p := range UserPerms {
 					if permCanonical(p.Name) == s {
 						u.Grants[p.Name] = p
+						u.Valid = true
 						continue outeruser
 					}
 				}
@@ -94,6 +96,7 @@ func mergeInputs(inputs []Input) (map[string]User, error) {
 					for _, p := range DatabasePerms {
 						if permCanonical(p.Name) == s {
 							d.Grants[p.Name] = p
+							u.Valid = true
 							continue outerdb
 						}
 					}
@@ -104,73 +107,83 @@ func mergeInputs(inputs []Input) (map[string]User, error) {
 					d.Schemas = map[string]Schema{}
 				}
 				for schemaname, schema := range db.Schemas {
-					s := d.Schemas[schemaname]
-					s.Name = schemaname
+					for _, schemaname := range split(schemaname) {
+						s := d.Schemas[schemaname]
+						s.Name = schemaname
 
-					if s.Grants == nil {
-						s.Grants = map[string]Perm{}
-					}
-				outerschema:
-					for _, ps := range schema.Grants {
-						str := permCanonical(ps)
-						for _, p := range SchemaPerms {
-							if permCanonical(p.Name) == str {
-								s.Grants[p.Name] = p
-								continue outerschema
-							}
+						if s.Grants == nil {
+							s.Grants = map[string]Perm{}
 						}
-						return r, errors.Errorf("Unhandled schema permission %#v", ps)
-					}
-
-					if s.Tables == nil {
-						s.Tables = map[string]Table{}
-					}
-					for tablename, table := range schema.Tables {
-						t := s.Tables[tablename]
-						t.Name = tablename
-
-						if t.Grants == nil {
-							t.Grants = map[string]Perm{}
-						}
-					outertable:
-						for _, ps := range table.Grants {
-							s := permCanonical(ps)
-							for _, p := range TablePerms {
-								if permCanonical(p.Name) == s {
-									t.Grants[p.Name] = p
-									continue outertable
+					outerschema:
+						for _, ps := range schema.Grants {
+							str := permCanonical(ps)
+							for _, p := range SchemaPerms {
+								if permCanonical(p.Name) == str {
+									s.Grants[p.Name] = p
+									u.Valid = true
+									continue outerschema
 								}
 							}
-							return r, errors.Errorf("Unhandled table permission %#v", ps)
+							return r, errors.Errorf("Unhandled schema permission %#v", ps)
 						}
-						s.Tables[tablename] = t
-					}
 
-					if s.Sequences == nil {
-						s.Sequences = map[string]Sequence{}
-					}
-					for sequencename, sequence := range schema.Sequences {
-						seq := s.Sequences[sequencename]
-						seq.Name = sequencename
-
-						if seq.Grants == nil {
-							seq.Grants = map[string]Perm{}
+						if s.Tables == nil {
+							s.Tables = map[string]Table{}
 						}
-					outersequence:
-						for _, ps := range sequence.Grants {
-							s := permCanonical(ps)
-							for _, p := range SequencePerms {
-								if permCanonical(p.Name) == s {
-									seq.Grants[p.Name] = p
-									continue outersequence
+						for tablename, table := range schema.Tables {
+							for _, tablename := range split(tablename) {
+
+								t := s.Tables[tablename]
+								t.Name = tablename
+
+								if t.Grants == nil {
+									t.Grants = map[string]Perm{}
 								}
+							outertable:
+								for _, ps := range table.Grants {
+									s := permCanonical(ps)
+									for _, p := range TablePerms {
+										if permCanonical(p.Name) == s {
+											t.Grants[p.Name] = p
+											u.Valid = true
+											continue outertable
+										}
+									}
+									return r, errors.Errorf("Unhandled table permission %#v", ps)
+								}
+								s.Tables[tablename] = t
 							}
-							return r, errors.Errorf("Unhandled sequence permission %#v", ps)
 						}
-						s.Sequences[sequencename] = seq
-					}
 
-					d.Schemas[schemaname] = s
+						if s.Sequences == nil {
+							s.Sequences = map[string]Sequence{}
+						}
+						for sequencename, sequence := range schema.Sequences {
+							for _, sequencename := range split(sequencename) {
+								seq := s.Sequences[sequencename]
+								seq.Name = sequencename
+
+								if seq.Grants == nil {
+									seq.Grants = map[string]Perm{}
+								}
+							outersequence:
+								for _, ps := range sequence.Grants {
+									s := permCanonical(ps)
+									for _, p := range SequencePerms {
+										if permCanonical(p.Name) == s {
+											seq.Grants[p.Name] = p
+											u.Valid = true
+											continue outersequence
+										}
+									}
+									return r, errors.Errorf("Unhandled sequence permission %#v", ps)
+								}
+								s.Sequences[sequencename] = seq
+							}
+						}
+
+						d.Schemas[schemaname] = s
+					}
 				}
 				u.Databases[dbname] = d
 			}
@@ -179,4 +192,13 @@ func mergeInputs(inputs []Input) (map[string]User, error) {
 	}
 
 	return r, nil
+}
+
+func split(in string) []string {
+	var out []string
+	for _, v := range strings.Split(in, " ") {
+		v = strings.TrimSpace(v)
+		out = append(out, v)
+	}
+	return out
 }
