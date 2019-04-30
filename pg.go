@@ -246,6 +246,7 @@ from pg_catalog.pg_namespace as n;`
 			if !ok {
 				continue // skip permissions for users not in pg_roles (special users like postgres, pg_*, etc)
 			}
+			u.Name = acl.Role
 
 			if u.Databases == nil {
 				u.Databases = map[string]Database{}
@@ -266,6 +267,7 @@ from pg_catalog.pg_namespace as n;`
 			}
 			d.Schemas[schemaname] = s
 			u.Databases[dbname] = d
+			out[acl.Role] = u
 		}
 
 	}
