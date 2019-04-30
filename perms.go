@@ -11,10 +11,14 @@ type Perm struct {
 }
 
 var (
-	Super     = Perm{Name: "SUPERUSER"}
-	Login     = Perm{Name: "LOGIN"}
-	UserPerms = []Perm{
+	Super      = Perm{Name: "SUPERUSER"}
+	Login      = Perm{Name: "LOGIN"}
+	Inherit    = Perm{Name: "INHERIT"}
+	CreateRole = Perm{Name: "CREATEROLE"}
+	UserPerms  = []Perm{
 		Super,
+		Inherit,
+		CreateRole,
 		Login,
 	}
 
@@ -55,6 +59,8 @@ var (
 
 	SequencePerms = []Perm{
 		Usage,
+		Select,
+		Update,
 	}
 
 	//Star       = Perm{Name: "STAR", Pg: "*"}

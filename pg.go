@@ -115,6 +115,12 @@ func pgSelectExisting() (map[string]User, map[string]Database, error) {
 		if r.RolSuper {
 			grants[Super.Name] = Super
 		}
+		if r.RolInherit {
+			grants[Inherit.Name] = Inherit
+		}
+		if r.RolCreateRole {
+			grants[CreateRole.Name] = CreateRole
+		}
 		if r.RolCanLogin {
 			grants[Login.Name] = Login
 		}

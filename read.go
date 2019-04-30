@@ -143,14 +143,21 @@ func mergeInputs(inputs []Input) (map[string]User, error) {
 								outertable:
 									for _, ps := range table.Grants {
 										s := permCanonical(ps)
-										for _, p := range TablePerms {
-											if permCanonical(p.Name) == s {
+										if s == "*" {
+											for _, p := range TablePerms {
 												t.Grants[p.Name] = p
 												u.Valid = true
-												continue outertable
 											}
+										} else {
+											for _, p := range TablePerms {
+												if permCanonical(p.Name) == s {
+													t.Grants[p.Name] = p
+													u.Valid = true
+													continue outertable
+												}
+											}
+											return r, errors.Errorf("Unhandled table permission %#v", ps)
 										}
-										return r, errors.Errorf("Unhandled table permission %#v", ps)
 									}
 									s.Tables[tablename] = t
 								}
@@ -170,14 +177,21 @@ func mergeInputs(inputs []Input) (map[string]User, error) {
 								outersequence:
 									for _, ps := range sequence.Grants {
 										s := permCanonical(ps)
-										for _, p := range SequencePerms {
-											if permCanonical(p.Name) == s {
+										if s == "*" {
+											for _, p := range SequencePerms {
 												seq.Grants[p.Name] = p
 												u.Valid = true
-												continue outersequence
 											}
+										} else {
+											for _, p := range SequencePerms {
+												if permCanonical(p.Name) == s {
+													seq.Grants[p.Name] = p
+													u.Valid = true
+													continue outersequence
+												}
+											}
+											return r, errors.Errorf("Unhandled sequence permission %#v", ps)
 										}
-										return r, errors.Errorf("Unhandled sequence permission %#v", ps)
 									}
 									s.Sequences[sequencename] = seq
 								}
