@@ -344,7 +344,7 @@ func pgSelectExistingTableish(config pgx.ConnConfig, dbname string, out map[stri
 				if u.Databases == nil {
 					u.Databases = map[string]Database{}
 				}
-				d := out[acl.Role].Databases[dbname]
+				d := u.Databases[dbname]
 				d.Name = dbname
 				if d.Schemas == nil {
 					d.Schemas = map[string]Schema{}
@@ -382,6 +382,7 @@ func pgSelectExistingTableish(config pgx.ConnConfig, dbname string, out map[stri
 				}
 				d.Schemas[schemaname] = s
 				u.Databases[dbname] = d
+				out[acl.Role] = u
 			}
 		}
 
@@ -458,7 +459,7 @@ where
 				if u.Databases == nil {
 					u.Databases = map[string]Database{}
 				}
-				d := out[acl.Role].Databases[dbname]
+				d := u.Databases[dbname]
 				d.Name = dbname
 				if d.Schemas == nil {
 					d.Schemas = map[string]Schema{}
@@ -496,6 +497,7 @@ where
 				}
 				d.Schemas[schemaname] = s
 				u.Databases[dbname] = d
+				out[acl.Role] = u
 			}
 		}
 
