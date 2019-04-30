@@ -595,7 +595,10 @@ func pgExec(db string, sql string, args ...interface{}) error {
 		fmt.Println("\\connect " + pgQuoteIdent(db))
 		lastPrintedDB = db
 	}
-	fmt.Println(pgReplace(sql, args))
+
+	if !timing {
+		fmt.Println(pgReplace(sql, args))
+	}
 
 	if dry {
 		return nil
