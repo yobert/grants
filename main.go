@@ -13,6 +13,7 @@ var (
 	debug  = false
 	timing = false
 	dry    = false
+	quiet  = false
 )
 
 func main() {
@@ -25,11 +26,15 @@ func main() {
 func mainRun() error {
 	defer timer("total").done()
 
-	var inputs []Input
+	var inpaths []string
 
 	for _, inpath := range os.Args[1:] {
 		if inpath == "-n" || inpath == "--dry" {
 			dry = true
+			continue
+		}
+		if inpath == "-q" || inpath == "--quiet" {
+			quiet = true
 			continue
 		}
 		if inpath == "-d" || inpath == "--debug" {
@@ -40,61 +45,40 @@ func mainRun() error {
 			timing = true
 			continue
 		}
+		if inpath == "--example" {
+			example()
+			os.Exit(1)
+		}
 		if strings.HasPrefix(inpath, "-") {
-			fmt.Println(`Usage:
+			fmt.Print(`Usage:
 
-  grants [options] <files...>
+  grants [options] <input yaml files...>
 
 Options:
 
-  -h, --help:   Display this help
-  -n, --dry:    Dry run (display SQL only)
+  -h, --help:   Display this help and exit
+  -n, --dry:    Dry run (no changes will be executed)
+  -q, --quiet:  Quiet (don't print SQL)
   -d, --debug:  Also print debug output
   -t, --timing: Print timings
 
-Input file syntax:
-
-users:
-  myuser:
-    password: supersecret
-    grants:
-      - LOGIN
-    databases:
-      mydatabase:
-        grants:
-          - CONNECT
-        schemas:
-          public:
-            grants:
-              - USAGE
-            tables:
-              sometable someothertable:
-                grants:
-                  - SELECT
-                  - INSERT
-                  - UDPATE
-            sequences:
-              sometable_id_seq:
-                grants:
-                  - USAGE
-
-  mysuperuser:
-    password: evenmoresecret
-    grants:
-      - SUPERUSER
-
-  # user with blank or missing password will be dropped.
-  usertobedropped:
-    password:`)
+   --example:   Print example input file and exit
+`)
 			os.Exit(1)
 		}
 
+		inpaths = append(inpaths, inpath)
+	}
+
+	var inputs []Input
+	for _, inpath := range inpaths {
 		input, err := ReadFile(inpath)
 		if err != nil {
 			return err
 		}
 		inputs = append(inputs, input)
 	}
+
 	newusers, err := mergeInputs(inputs)
 	if err != nil {
 		return err

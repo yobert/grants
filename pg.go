@@ -49,6 +49,9 @@ func pgConn(config pgx.ConnConfig) (*pgx.Conn, error) {
 	if ok {
 		return c, nil
 	}
+
+	defer timer(fmt.Sprintf("%#v connect user %#v host %#v", config.Database, config.User, config.Host)).done()
+
 	var err error
 	c, err = pgx.Connect(config)
 	if err != nil {
@@ -206,7 +209,7 @@ func pgSelectExisting() (map[string]User, map[string]Database, error) {
 }
 
 func pgSelectExistingSchemas(config pgx.ConnConfig, dbname string, out map[string]User, existing map[string]Database) error {
-	defer timer(dbname + " query schema").done()
+	defer timer(fmt.Sprintf("%#v query schema", dbname)).done()
 	config.Database = dbname
 
 	conn, err := pgConn(config)
@@ -284,7 +287,7 @@ from pg_catalog.pg_namespace as n;`
 	return nil
 }
 func pgSelectExistingTableish(config pgx.ConnConfig, dbname string, out map[string]User, existing map[string]Database) error {
-	defer timer(dbname + " query table acls").done()
+	defer timer(fmt.Sprintf("%#v query table ACLs", dbname)).done()
 	config.Database = dbname
 
 	conn, err := pgConn(config)
@@ -401,7 +404,7 @@ func pgSelectExistingTableish(config pgx.ConnConfig, dbname string, out map[stri
 }
 
 func pgSelectExistingDefaults(config pgx.ConnConfig, dbname string, out map[string]User) error {
-	defer timer(dbname + " query default acl").done()
+	defer timer(fmt.Sprintf("%#v query defualt ACL", dbname)).done()
 	config.Database = dbname
 
 	conn, err := pgConn(config)
@@ -599,14 +602,14 @@ func pgExecMain(sql string, args ...interface{}) error {
 	return pgExec("postgres", sql, args...)
 }
 func pgExec(db string, sql string, args ...interface{}) error {
-	defer timer(pgReplace(sql, args)).done()
+	defer timer(fmt.Sprintf("%#v %s", db, pgReplace(sql, args))).done()
 
-	if db != lastPrintedDB {
+	if db != lastPrintedDB && !quiet && !timing {
 		fmt.Println("\\connect " + pgQuoteIdent(db))
 		lastPrintedDB = db
 	}
 
-	if !timing {
+	if !timing && !quiet {
 		fmt.Println(pgReplace(sql, args))
 	}
 
