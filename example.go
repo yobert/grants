@@ -2,6 +2,27 @@ package main
 
 import "fmt"
 
+func usage() {
+	fmt.Print(`Usage:
+
+  grants [options] <input yaml files...>
+
+Options:
+
+  --help:       Display this help and exit
+  --example:    Print example input file and exit
+
+  -n, --dry:    Dry run (no changes will be executed)
+  -q, --quiet:  Quiet (don't print SQL)
+  -d, --debug:  Also print debug output
+  -t, --timing: Print timings
+
+  -h, --host:   Host to connect to, or unix socket path
+  -p, --port:   Port (default 5432)
+  -u, --user:   User (default "postgres")
+`)
+}
+
 func example() {
 	fmt.Print(`users:
   myuser:

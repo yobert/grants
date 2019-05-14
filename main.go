@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 
+	"github.com/jackc/pgx"
 	"github.com/pkg/errors"
 )
 
@@ -14,6 +16,10 @@ var (
 	timing = false
 	dry    = false
 	quiet  = false
+
+	baseconfig = pgx.ConnConfig{
+		User: "postgres",
+	}
 )
 
 func main() {
@@ -28,46 +34,77 @@ func mainRun() error {
 
 	var inpaths []string
 
-	for _, inpath := range os.Args[1:] {
-		if inpath == "-n" || inpath == "--dry" {
+	mode := "file"
+
+	for _, arg := range os.Args[1:] {
+		if arg == "-n" || arg == "--dry" {
 			dry = true
 			continue
 		}
-		if inpath == "-q" || inpath == "--quiet" {
+		if arg == "-q" || arg == "--quiet" {
 			quiet = true
 			continue
 		}
-		if inpath == "-d" || inpath == "--debug" {
+		if arg == "-d" || arg == "--debug" {
 			debug = true
 			continue
 		}
-		if inpath == "-t" || inpath == "--timing" {
+		if arg == "-t" || arg == "--timing" {
 			timing = true
 			continue
 		}
-		if inpath == "--example" {
+		if arg == "-h" || arg == "--host" {
+			mode = "host"
+			continue
+		}
+		if arg == "-p" || arg == "--port" {
+			mode = "port"
+			continue
+		}
+		if arg == "-u" || arg == "--user" {
+			mode = "user"
+			continue
+		}
+		if arg == "--example" {
 			example()
 			os.Exit(1)
 		}
-		if strings.HasPrefix(inpath, "-") {
-			fmt.Print(`Usage:
-
-  grants [options] <input yaml files...>
-
-Options:
-
-  -h, --help:   Display this help and exit
-  -n, --dry:    Dry run (no changes will be executed)
-  -q, --quiet:  Quiet (don't print SQL)
-  -d, --debug:  Also print debug output
-  -t, --timing: Print timings
-
-   --example:   Print example input file and exit
-`)
+		if strings.HasPrefix(arg, "-") {
+			if arg != "--help" {
+				fmt.Printf("Invalid argument %#v\n\n", arg)
+			}
+			usage()
 			os.Exit(1)
 		}
 
-		inpaths = append(inpaths, inpath)
+		switch mode {
+		case "file":
+			inpaths = append(inpaths, arg)
+		case "host":
+			baseconfig.Host = arg
+		case "port":
+			port, err := strconv.Atoi(arg)
+			if err != nil {
+				return err
+			}
+			if port < 1 || port > 65535 {
+				fmt.Printf("Port number %d out of range\n", port)
+				os.Exit(1)
+			}
+			baseconfig.Port = uint16(port)
+		case "user":
+			baseconfig.User = arg
+		default:
+			return fmt.Errorf("Invalid argument mode %#v", mode)
+		}
+
+		mode = "file"
+	}
+
+	if mode != "file" {
+		fmt.Printf("Missing %s argument\n\n", mode)
+		usage()
+		os.Exit(1)
 	}
 
 	var inputs []Input
@@ -151,6 +188,16 @@ Options:
 			return errors.Errorf("Managing role %#v isn't safe with a tool. Revoking superuser could be catastrophic for your database", name)
 		}
 
+		// A newly created user in postgres defaults to have some permissions,
+		// such as inherit. Let's set them here, so when we create a new user it
+		// correctly revokes these privileges without requiring another pass.
+		if !olduser.Valid && newuser.Valid {
+			if olduser.Grants == nil {
+				olduser.Grants = map[string]Perm{}
+			}
+			olduser.Grants[Inherit.Name] = Inherit
+		}
+
 		if debug {
 			fmt.Println("--", name, "--")
 			fmt.Print("old: ")
@@ -158,9 +205,6 @@ Options:
 			fmt.Print("new: ")
 			newuser.Print()
 		}
-
-		h1 := pgPasswordHash(name, newuser.Password)
-		h2 := pgPasswordHash(name, olduser.Password)
 
 		// "public" is a special built-in role for postgres. We ignore that one.
 		if !olduser.Valid && newuser.Valid && name != "public" {
@@ -173,19 +217,6 @@ Options:
 		if !newuser.Valid {
 			newuser.Grants = nil
 			newuser.Databases = nil
-		}
-
-		// password changes
-		if h1 != h2 {
-			if h1 == "" && h2 != "" {
-				if err := pgExecMain("ALTER ROLE " + pgQuoteIdent(name) + " WITH PASSWORD NULL;"); err != nil {
-					return err
-				}
-			} else {
-				if err := pgExecMain("ALTER ROLE " + pgQuoteIdent(name) + " WITH PASSWORD " + pgQuote(h1) + ";"); err != nil {
-					return err
-				}
-			}
 		}
 
 		// revoke user attributes
@@ -209,6 +240,25 @@ Options:
 			}
 			if !ok {
 				if err := pgExecMain("ALTER ROLE " + pgQuoteIdent(name) + " WITH " + p.Name + ";"); err != nil {
+					return err
+				}
+			}
+		}
+
+		// password changes
+		h1 := pgPasswordHash(name, newuser.Password)
+		h2 := pgPasswordHash(name, olduser.Password)
+
+		// If the user will not have the login privilege, password changes will have no effect
+		_, wantlogin := newuser.Grants[Login.Name]
+
+		if h1 != h2 && wantlogin {
+			if h1 == "" && h2 != "" {
+				if err := pgExecMain("ALTER ROLE " + pgQuoteIdent(name) + " WITH PASSWORD NULL;"); err != nil {
+					return err
+				}
+			} else {
+				if err := pgExecMain("ALTER ROLE " + pgQuoteIdent(name) + " WITH PASSWORD " + pgQuote(h1) + ";"); err != nil {
 					return err
 				}
 			}

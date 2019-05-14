@@ -71,10 +71,8 @@ func pgSelectExisting() (map[string]User, map[string]Database, error) {
 	out := map[string]User{}          // existing user and default permissions
 	existing := map[string]Database{} // existing databases/schemas/tables/etc (so we can apply "*")
 
-	config := pgx.ConnConfig{
-		User:     "postgres",
-		Database: "postgres",
-	}
+	config := baseconfig
+	config.Database = "postgres"
 
 	conn, err := pgConn(config)
 	if err != nil {
