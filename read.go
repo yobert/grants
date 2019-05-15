@@ -9,7 +9,8 @@ import (
 )
 
 type Input struct {
-	Users map[string]InputUser
+	Users           map[string]InputUser
+	DefaultPrivRole string `yaml:"default_priv_role"`
 }
 type InputUser struct {
 	Password  string
@@ -52,10 +53,18 @@ func ReadFile(filepath string) (Input, error) {
 }
 
 // some really ugly data structure munging
-func mergeInputs(inputs []Input) (map[string]User, error) {
+func mergeInputs(inputs []Input) (map[string]User, string, error) {
 	r := map[string]User{}
+	dr := ""
 
 	for _, input := range inputs {
+		if input.DefaultPrivRole != "" {
+			if dr != "" && dr != input.DefaultPrivRole {
+				return r, dr, errors.Errorf("Conflicting definitions of default_priv_role: %#v and %#v", dr, input.DefaultPrivRole)
+			}
+			dr = input.DefaultPrivRole
+		}
+
 		for name, user := range input.Users {
 			for _, name := range split(name) {
 				u := r[name]
@@ -67,7 +76,7 @@ func mergeInputs(inputs []Input) (map[string]User, error) {
 				if u.Password == "" {
 					u.Password = user.Password
 				} else if user.Password != "" && user.Password != u.Password {
-					return r, errors.Errorf("User %#v has two conflicting passwords defined", name)
+					return r, dr, errors.Errorf("User %#v has two conflicting passwords defined", name)
 				}
 
 				if u.Grants == nil {
@@ -83,7 +92,7 @@ func mergeInputs(inputs []Input) (map[string]User, error) {
 							continue outeruser
 						}
 					}
-					return r, errors.Errorf("Unhandled user permission %#v", ps)
+					return r, dr, errors.Errorf("Unhandled user permission %#v", ps)
 				}
 
 				if u.Databases == nil {
@@ -106,7 +115,7 @@ func mergeInputs(inputs []Input) (map[string]User, error) {
 								continue outerdb
 							}
 						}
-						return r, errors.Errorf("Unhandled database permission %#v", ps)
+						return r, dr, errors.Errorf("Unhandled database permission %#v", ps)
 					}
 
 					if d.Schemas == nil {
@@ -130,7 +139,7 @@ func mergeInputs(inputs []Input) (map[string]User, error) {
 										continue outerschema
 									}
 								}
-								return r, errors.Errorf("Unhandled schema permission %#v", ps)
+								return r, dr, errors.Errorf("Unhandled schema permission %#v", ps)
 							}
 
 							if s.Tables == nil {
@@ -161,7 +170,7 @@ func mergeInputs(inputs []Input) (map[string]User, error) {
 													continue outertable
 												}
 											}
-											return r, errors.Errorf("Unhandled table permission %#v", ps)
+											return r, dr, errors.Errorf("Unhandled table permission %#v", ps)
 										}
 									}
 									s.Tables[tablename] = t
@@ -195,7 +204,7 @@ func mergeInputs(inputs []Input) (map[string]User, error) {
 													continue outersequence
 												}
 											}
-											return r, errors.Errorf("Unhandled sequence permission %#v", ps)
+											return r, dr, errors.Errorf("Unhandled sequence permission %#v", ps)
 										}
 									}
 									s.Sequences[sequencename] = seq
@@ -212,7 +221,7 @@ func mergeInputs(inputs []Input) (map[string]User, error) {
 		}
 	}
 
-	return r, nil
+	return r, dr, nil
 }
 
 func split(in string) []string {

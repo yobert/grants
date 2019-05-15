@@ -13,8 +13,7 @@ import (
 )
 
 const (
-	pgDefaultMarker     = "*"
-	pgDefaultAssumeRole = "postgres"
+	pgDefaultMarker = "*"
 )
 
 type pgRole struct {
@@ -65,7 +64,7 @@ func pgConn(dbname string) (*pgx.Conn, error) {
 	return c, nil
 }
 
-func pgSelectExisting() (map[string]User, map[string]Database, error) {
+func pgSelectExisting(defaultPrivRole string) (map[string]User, map[string]Database, error) {
 	defer timer("total query").done()
 
 	// Postgres is a little weird in now it splits out databases. We can query the database list,
@@ -212,7 +211,7 @@ func pgSelectExisting() (map[string]User, map[string]Database, error) {
 		if err := pgSelectExistingTableish(dbname, out, existing); err != nil {
 			return nil, nil, err
 		}
-		if err := pgSelectExistingDefaults(dbname, out); err != nil {
+		if err := pgSelectExistingDefaults(defaultPrivRole, dbname, out); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -412,7 +411,7 @@ func pgSelectExistingTableish(dbname string, out map[string]User, existing map[s
 	return nil
 }
 
-func pgSelectExistingDefaults(dbname string, out map[string]User) error {
+func pgSelectExistingDefaults(defaultPrivRole string, dbname string, out map[string]User) error {
 	defer timer(fmt.Sprintf("%#v query defualt ACL", dbname)).done()
 
 	conn, err := pgConn(dbname)
@@ -455,7 +454,7 @@ where
 		// I'm not sure how to squish multi-user into the input syntax yet.
 		// This means that default permissions will only work if postgres is the user creating things,
 		// which I think is a pretty safe assumption for now.
-		if r.name != pgDefaultAssumeRole {
+		if r.name != defaultPrivRole {
 			continue
 		}
 

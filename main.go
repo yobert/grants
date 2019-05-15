@@ -122,12 +122,16 @@ func mainRun() error {
 		inputs = append(inputs, input)
 	}
 
-	newusers, err := mergeInputs(inputs)
+	newusers, defaultPrivRole, err := mergeInputs(inputs)
 	if err != nil {
 		return err
 	}
 
-	oldusers, existing, err := pgSelectExisting()
+	if defaultPrivRole == "" {
+		defaultPrivRole = "postgres"
+	}
+
+	oldusers, existing, err := pgSelectExisting(defaultPrivRole)
 	if err != nil {
 		return err
 	}
@@ -335,7 +339,7 @@ func mainRun() error {
 						if !ok {
 							sql := "REVOKE " + p.Name + " ON TABLE " + pgQuoteIdentPair(schemaname, tablename) + " FROM " + pgQuoteIdent(name) + ";"
 							if tablename == pgDefaultMarker {
-								sql = "ALTER DEFAULT PRIVILEGES FOR ROLE " + pgQuoteIdent(pgDefaultAssumeRole) + " IN SCHEMA " + pgQuoteIdent(schemaname) + " REVOKE " + p.Name + " ON TABLES FROM " + pgQuoteIdent(name) + ";"
+								sql = "ALTER DEFAULT PRIVILEGES FOR ROLE " + pgQuoteIdent(defaultPrivRole) + " IN SCHEMA " + pgQuoteIdent(schemaname) + " REVOKE " + p.Name + " ON TABLES FROM " + pgQuoteIdent(name) + ";"
 							}
 							if err := pgExec(dbname, sql); err != nil {
 								return err
@@ -356,7 +360,7 @@ func mainRun() error {
 						if !ok {
 							sql := "REVOKE " + p.Name + " ON SEQUENCE " + pgQuoteIdentPair(schemaname, sequencename) + " FROM " + pgQuoteIdent(name) + ";"
 							if sequencename == pgDefaultMarker {
-								sql = "ALTER DEFAULT PRIVILEGES FOR ROLE " + pgQuoteIdent(pgDefaultAssumeRole) + " IN SCHEMA " + pgQuoteIdent(schemaname) + " REVOKE " + p.Name + " ON SEQUENCES FROM " + pgQuoteIdent(name) + ";"
+								sql = "ALTER DEFAULT PRIVILEGES FOR ROLE " + pgQuoteIdent(defaultPrivRole) + " IN SCHEMA " + pgQuoteIdent(schemaname) + " REVOKE " + p.Name + " ON SEQUENCES FROM " + pgQuoteIdent(name) + ";"
 							}
 							if err := pgExec(dbname, sql); err != nil {
 								return err
@@ -410,7 +414,7 @@ func mainRun() error {
 						if !ok {
 							sql := "GRANT " + p.Name + " ON TABLE " + pgQuoteIdentPair(schemaname, tablename) + " TO " + pgQuoteIdent(name) + ";"
 							if tablename == pgDefaultMarker {
-								sql = "ALTER DEFAULT PRIVILEGES FOR ROLE " + pgQuoteIdent(pgDefaultAssumeRole) + " IN SCHEMA " + pgQuoteIdent(schemaname) + " GRANT " + p.Name + " ON TABLES TO " + pgQuoteIdent(name) + ";"
+								sql = "ALTER DEFAULT PRIVILEGES FOR ROLE " + pgQuoteIdent(defaultPrivRole) + " IN SCHEMA " + pgQuoteIdent(schemaname) + " GRANT " + p.Name + " ON TABLES TO " + pgQuoteIdent(name) + ";"
 							}
 							if err := pgExec(dbname, sql); err != nil {
 								return err
@@ -431,7 +435,7 @@ func mainRun() error {
 						if !ok {
 							sql := "GRANT " + p.Name + " ON SEQUENCE " + pgQuoteIdentPair(schemaname, sequencename) + " TO " + pgQuoteIdent(name) + ";"
 							if sequencename == pgDefaultMarker {
-								sql = "ALTER DEFAULT PRIVILEGES FOR ROLE " + pgQuoteIdent(pgDefaultAssumeRole) + " IN SCHEMA " + pgQuoteIdent(schemaname) + " GRANT " + p.Name + " ON SEQUENCES TO " + pgQuoteIdent(name) + ";"
+								sql = "ALTER DEFAULT PRIVILEGES FOR ROLE " + pgQuoteIdent(defaultPrivRole) + " IN SCHEMA " + pgQuoteIdent(schemaname) + " GRANT " + p.Name + " ON SEQUENCES TO " + pgQuoteIdent(name) + ";"
 							}
 							if err := pgExec(dbname, sql); err != nil {
 								return err
