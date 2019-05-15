@@ -37,7 +37,7 @@ func mainRun() error {
 	mode := "file"
 
 	for _, arg := range os.Args[1:] {
-		if arg == "-n" || arg == "--dry" {
+		if arg == "-n" || arg == "-d" || arg == "--dry" {
 			dry = true
 			continue
 		}
@@ -45,7 +45,7 @@ func mainRun() error {
 			quiet = true
 			continue
 		}
-		if arg == "-d" || arg == "--debug" {
+		if arg == "--debug" {
 			debug = true
 			continue
 		}
@@ -63,6 +63,10 @@ func mainRun() error {
 		}
 		if arg == "-u" || arg == "--user" {
 			mode = "user"
+			continue
+		}
+		if arg == "--password" {
+			mode = "password"
 			continue
 		}
 		if arg == "--example" {
@@ -94,6 +98,8 @@ func mainRun() error {
 			baseconfig.Port = uint16(port)
 		case "user":
 			baseconfig.User = arg
+		case "password":
+			baseconfig.Password = arg
 		default:
 			return fmt.Errorf("Invalid argument mode %#v", mode)
 		}

@@ -9,17 +9,18 @@ func usage() {
 
 Options:
 
-  --help:       Display this help and exit
-  --example:    Print example input file and exit
+  --help:        Display this help and exit
+  --example:     Print example input file and exit
 
-  -n, --dry:    Dry run (no changes will be executed)
-  -q, --quiet:  Quiet (don't print SQL)
-  -d, --debug:  Also print debug output
-  -t, --timing: Print timings
+  -n, -d, --dry: Dry run (no changes will be executed)
+  -q, --quiet:   Quiet (don't print SQL)
+  -t, --timing:  Print timings
+  --debug:       Print debug output
 
-  -h, --host:   Host to connect to, or unix socket path
-  -p, --port:   Port (default 5432)
-  -u, --user:   User (default "postgres")
+  -h, --host:    Host to connect to, or unix socket path
+  -p, --port:    Port (default 5432)
+  -u, --user:    User (default "postgres")
+  --password:    Password on the command line. Insecure!
 `)
 }
 
