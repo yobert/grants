@@ -219,21 +219,24 @@ func mainRun() error {
 			}
 		}
 
-		// If the user is to be dropped, consider all permissions "revoked"
+		// If the user is to be dropped, consider all permissions "revoked" and all settings default
 		if !newuser.Valid {
 			newuser.Grants = nil
 			newuser.Databases = nil
+			newuser.Settings = nil
 		}
 
 		// revoke user attributes
-		for _, p := range olduser.Grants {
-			ok := false
-			if newuser.Grants != nil {
-				_, ok = newuser.Grants[p.Name]
-			}
-			if !ok {
-				if err := pgExecMain("ALTER ROLE " + pgQuoteIdent(name) + " WITH NO" + p.Name + ";"); err != nil {
-					return err
+		if newuser.Valid {
+			for _, p := range olduser.Grants {
+				ok := false
+				if newuser.Grants != nil {
+					_, ok = newuser.Grants[p.Name]
+				}
+				if !ok {
+					if err := pgExecMain("ALTER ROLE " + pgQuoteIdent(name) + " WITH NO" + p.Name + ";"); err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -247,6 +250,25 @@ func mainRun() error {
 			if !ok {
 				if err := pgExecMain("ALTER ROLE " + pgQuoteIdent(name) + " WITH " + p.Name + ";"); err != nil {
 					return err
+				}
+			}
+		}
+
+		// settings additions or changes
+		for k, v := range newuser.Settings {
+			if olduser.Settings == nil || olduser.Settings[k] != v {
+				if err := pgExecMain("ALTER ROLE " + pgQuoteIdent(name) + " SET " + pgQuoteIdent(k) + " = " + pgQuote(v) + ";"); err != nil {
+					return err
+				}
+			}
+		}
+		// settings removals
+		if newuser.Valid {
+			for k := range olduser.Settings {
+				if newuser.Settings == nil || newuser.Settings[k] == "" {
+					if err := pgExecMain("ALTER ROLE " + pgQuoteIdent(name) + " SET " + pgQuoteIdent(k) + " = DEFAULT;"); err != nil {
+						return err
+					}
 				}
 			}
 		}

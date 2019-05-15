@@ -15,6 +15,7 @@ type InputUser struct {
 	Password  string
 	Grants    InputGrants
 	Databases map[string]InputDatabase
+	Settings  map[string]string
 }
 type InputDatabase struct {
 	Grants  InputGrants
@@ -59,6 +60,10 @@ func mergeInputs(inputs []Input) (map[string]User, error) {
 			for _, name := range split(name) {
 				u := r[name]
 				u.Name = name
+				u.Settings = map[string]string{}
+				for k, v := range user.Settings {
+					u.Settings[strings.ToLower(k)] = v
+				}
 				if u.Password == "" {
 					u.Password = user.Password
 				} else if user.Password != "" && user.Password != u.Password {

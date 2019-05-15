@@ -9,6 +9,7 @@ type User struct {
 	Password  string
 	Grants    Grants
 	Databases map[string]Database
+	Settings  map[string]string
 	Valid     bool
 }
 type Database struct {
@@ -34,7 +35,7 @@ type Sequence struct {
 type Grants map[string]Perm
 
 func (u User) Print() {
-	fmt.Printf("user %#v password %#v\n", u.Name, u.Password)
+	fmt.Printf("user %#v password %#v settings %#v\n", u.Name, u.Password, u.Settings)
 	for _, p := range u.Grants {
 		fmt.Println("\t» " + p.Name)
 	}

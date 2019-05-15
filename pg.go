@@ -126,11 +126,23 @@ func pgSelectExisting() (map[string]User, map[string]Database, error) {
 		if r.RolCanLogin {
 			grants[Login.Name] = Login
 		}
+		settings := map[string]string{}
+		for _, s := range r.RolConfig {
+			i := strings.IndexByte(s, '=')
+			if i == -1 {
+				continue
+			}
+			k := s[:i]
+			v := s[i+1:]
+			settings[k] = v
+		}
+
 		out[r.RolName] = User{
 			Name:     r.RolName,
 			Password: pass,
 			Grants:   grants,
 			Valid:    true,
+			Settings: settings,
 		}
 	}
 	if err := rows.Err(); err != nil {

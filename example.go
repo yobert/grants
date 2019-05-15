@@ -30,6 +30,9 @@ func example() {
     password: supersecret
     grants:
       - LOGIN
+    settings:
+      statement_timeout: 60s
+      lock_timeout: 30s
     databases:
       mydatabase:
         grants:
