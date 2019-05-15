@@ -42,7 +42,11 @@ var pgConns = map[string]*pgx.Conn{}
 var lastPrintedDB = "postgres"
 var pgSafeIdent = regexp.MustCompile(`^[a-zA-Z]+[a-zA-Z0-9_]*$`)
 
-func pgConn(config pgx.ConnConfig) (*pgx.Conn, error) {
+func pgConn(dbname string) (*pgx.Conn, error) {
+
+	config := baseconfig
+	config.Database = dbname
+
 	key := fmt.Sprintf("%s/%s/%s", config.User, config.Host, config.Database)
 
 	c, ok := pgConns[key]
@@ -71,10 +75,7 @@ func pgSelectExisting() (map[string]User, map[string]Database, error) {
 	out := map[string]User{}          // existing user and default permissions
 	existing := map[string]Database{} // existing databases/schemas/tables/etc (so we can apply "*")
 
-	config := baseconfig
-	config.Database = "postgres"
-
-	conn, err := pgConn(config)
+	conn, err := pgConn("postgres")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -193,24 +194,23 @@ func pgSelectExisting() (map[string]User, map[string]Database, error) {
 	}
 
 	for _, dbname := range dbnames {
-		if err := pgSelectExistingSchemas(config, dbname, out, existing); err != nil {
+		if err := pgSelectExistingSchemas(dbname, out, existing); err != nil {
 			return nil, nil, err
 		}
-		if err := pgSelectExistingTableish(config, dbname, out, existing); err != nil {
+		if err := pgSelectExistingTableish(dbname, out, existing); err != nil {
 			return nil, nil, err
 		}
-		if err := pgSelectExistingDefaults(config, dbname, out); err != nil {
+		if err := pgSelectExistingDefaults(dbname, out); err != nil {
 			return nil, nil, err
 		}
 	}
 	return out, existing, nil
 }
 
-func pgSelectExistingSchemas(config pgx.ConnConfig, dbname string, out map[string]User, existing map[string]Database) error {
+func pgSelectExistingSchemas(dbname string, out map[string]User, existing map[string]Database) error {
 	defer timer(fmt.Sprintf("%#v query schema", dbname)).done()
-	config.Database = dbname
 
-	conn, err := pgConn(config)
+	conn, err := pgConn(dbname)
 	if err != nil {
 		return err
 	}
@@ -284,11 +284,10 @@ from pg_catalog.pg_namespace as n;`
 
 	return nil
 }
-func pgSelectExistingTableish(config pgx.ConnConfig, dbname string, out map[string]User, existing map[string]Database) error {
+func pgSelectExistingTableish(dbname string, out map[string]User, existing map[string]Database) error {
 	defer timer(fmt.Sprintf("%#v query table ACLs", dbname)).done()
-	config.Database = dbname
 
-	conn, err := pgConn(config)
+	conn, err := pgConn(dbname)
 	if err != nil {
 		return err
 	}
@@ -401,11 +400,10 @@ func pgSelectExistingTableish(config pgx.ConnConfig, dbname string, out map[stri
 	return nil
 }
 
-func pgSelectExistingDefaults(config pgx.ConnConfig, dbname string, out map[string]User) error {
+func pgSelectExistingDefaults(dbname string, out map[string]User) error {
 	defer timer(fmt.Sprintf("%#v query defualt ACL", dbname)).done()
-	config.Database = dbname
 
-	conn, err := pgConn(config)
+	conn, err := pgConn(dbname)
 	if err != nil {
 		return err
 	}
@@ -615,12 +613,7 @@ func pgExec(db string, sql string, args ...interface{}) error {
 		return nil
 	}
 
-	config := pgx.ConnConfig{
-		User:     "postgres",
-		Database: db,
-	}
-
-	conn, err := pgConn(config)
+	conn, err := pgConn(db)
 	if err != nil {
 		return err
 	}
