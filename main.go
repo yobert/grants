@@ -19,6 +19,7 @@ var (
 
 	baseconfig = pgx.ConnConfig{
 		User: "postgres",
+		Host: "/var/run/postgresql/.s.PGSQL.5432",
 	}
 )
 

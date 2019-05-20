@@ -46,7 +46,7 @@ func pgConn(dbname string) (*pgx.Conn, error) {
 	config := baseconfig
 	config.Database = dbname
 
-	key := fmt.Sprintf("%s/%s/%s", config.User, config.Host, config.Database)
+	key := fmt.Sprintf("%s,%s,%s,%s", config.User, config.Host, config.Port, config.Database)
 
 	c, ok := pgConns[key]
 	if ok {
