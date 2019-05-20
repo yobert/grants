@@ -67,6 +67,10 @@ func pgConn(dbname string) (*pgx.Conn, error) {
 func pgSelectExisting(defaultPrivRole string) (map[string]User, map[string]Database, error) {
 	defer timer("total query").done()
 
+	if baseconfig.Host == "none" {
+		return nil, nil, nil
+	}
+
 	// Postgres is a little weird in now it splits out databases. We can query the database list,
 	// but cannot query user permissions across databases from a single connection as far as I can tell.
 	// So we loop through all the databases, and build up our data from there.

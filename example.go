@@ -17,10 +17,20 @@ Options:
   -t, --timing:  Print timings
   --debug:       Print debug output
 
-  -h, --host:    Host to connect to, or unix socket path
-  -p, --port:    Port (default 5432)
-  -u, --user:    User (default "postgres")
+  -h, --host:    Host to connect to, or unix socket path.
+                 (Default "/var/run/postgresql/.s.PGSQL.5432")
+                 Set to "none" to disable database changes, which
+                 might be useful when you only want to modify
+                 pgbouncer with --pgbouncer.
+
+  -p, --port:    Port (Default 5432)
+  -u, --user:    User (Default "postgres")
+
   --password:    Password on the command line. Insecure!
+
+  --pgbouncer:   Path to pgbouncer user auth list file. Users
+                 will be updated in this file as well as the
+                 database.
 `)
 }
 

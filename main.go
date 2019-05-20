@@ -21,6 +21,8 @@ var (
 		User: "postgres",
 		Host: "/var/run/postgresql/.s.PGSQL.5432",
 	}
+
+	pgbouncer string
 )
 
 func main() {
@@ -70,6 +72,10 @@ func mainRun() error {
 			mode = "password"
 			continue
 		}
+		if arg == "--pgbouncer" {
+			mode = "pgbouncer"
+			continue
+		}
 		if arg == "--example" {
 			example()
 			os.Exit(1)
@@ -101,6 +107,8 @@ func mainRun() error {
 			baseconfig.User = arg
 		case "password":
 			baseconfig.Password = arg
+		case "pgbouncer":
+			pgbouncer = arg
 		default:
 			return fmt.Errorf("Invalid argument mode %#v", mode)
 		}
