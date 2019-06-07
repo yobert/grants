@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx"
+	"github.com/jackc/pgx/pgtype"
 	"github.com/pkg/errors"
 )
 
@@ -25,8 +26,7 @@ type pgRole struct {
 	RolCanLogin    bool
 	RolReplication bool
 	RolConnLimit   int
-	RolPassword    *string
-	RolValidUntil  *string
+	RolValidUntil  pgtype.Timestamptz
 	//RolBypassRLS   bool // pg 10 thing
 	RolConfig []string
 }
@@ -40,6 +40,14 @@ type pgACL struct {
 var pgConns = map[string]*pgx.Conn{}
 var lastPrintedDB = "postgres"
 var pgSafeIdent = regexp.MustCompile(`^[a-zA-Z]+[a-zA-Z0-9_]*$`)
+
+var ignoreDatabases = map[string]bool{
+	"rdsadmin":  true,
+	"template0": true,
+}
+var ignoreUsers = map[string]bool{
+	"postgres": true,
+}
 
 func pgConn(dbname string) (*pgx.Conn, error) {
 
@@ -79,14 +87,39 @@ func pgSelectExisting(defaultPrivRole string) (map[string]User, map[string]Datab
 		return nil, nil, err
 	}
 
+	// Load passwords. If we're using amazon RDS, this won't work and we just have to re-assert passwords every time :'(
+	// maybe someday I'll figure out a way around this.
+	passwords := map[string]string{}
+	err = func() error {
+		sql := `select s.usename, s.passwd from pg_shadow as s where s.passwd is not null;`
+		rows, err := conn.Query(sql)
+		if err != nil {
+			return errors.WithStack(err)
+		}
+		for rows.Next() {
+			var u, s string
+			err := rows.Scan(&u, &s)
+			if err != nil {
+				return errors.WithStack(err)
+			}
+			passwords[u] = s
+		}
+		if err := rows.Err(); err != nil {
+			return errors.WithStack(err)
+		}
+		return nil
+	}()
+	if err != nil {
+		// Oh well.
+		fmt.Println(err)
+	}
+
 	// Load every user (role). This list is the same no matter what database we connect to.
 
 	sql := `select r.rolname, r.rolsuper, r.rolinherit, r.rolcreaterole, r.rolcreatedb,
-                  r.rolcanlogin, r.rolreplication, r.rolconnlimit, s.passwd, r.rolvaliduntil,
+                  r.rolcanlogin, r.rolreplication, r.rolconnlimit, r.rolvaliduntil,
                   r.rolconfig
-           from pg_roles as r
-           left join pg_shadow as s on
-             r.rolname = s.usename;`
+           from pg_roles as r;`
 
 	rows, err := conn.Query(sql)
 	if err != nil {
@@ -96,21 +129,17 @@ func pgSelectExisting(defaultPrivRole string) (map[string]User, map[string]Datab
 		var r pgRole
 		err := rows.Scan(
 			&r.RolName, &r.RolSuper, &r.RolInherit, &r.RolCreateRole, &r.RolCreateDB,
-			&r.RolCanLogin, &r.RolReplication, &r.RolConnLimit, &r.RolPassword, &r.RolValidUntil,
+			&r.RolCanLogin, &r.RolReplication, &r.RolConnLimit, &r.RolValidUntil,
 			&r.RolConfig,
 		)
 		if err != nil {
 			return nil, nil, errors.WithStack(err)
 		}
-		if strings.ToLower(r.RolName) == "postgres" {
+		if ignoreUsers[strings.ToLower(r.RolName)] {
 			continue
 		}
 		if strings.HasPrefix(r.RolName, "pg_") {
 			continue
-		}
-		pass := ""
-		if r.RolPassword != nil {
-			pass = *r.RolPassword
 		}
 		grants := map[string]Perm{}
 		if r.RolSuper {
@@ -138,7 +167,7 @@ func pgSelectExisting(defaultPrivRole string) (map[string]User, map[string]Datab
 
 		out[r.RolName] = User{
 			Name:     r.RolName,
-			Password: pass,
+			Password: passwords[r.RolName],
 			Grants:   grants,
 			Valid:    true,
 			Settings: settings,
@@ -165,7 +194,7 @@ func pgSelectExisting(defaultPrivRole string) (map[string]User, map[string]Datab
 		if err := rows.Scan(&dbname, &dbacl); err != nil {
 			return nil, nil, errors.WithStack(err)
 		}
-		if dbname == "template0" {
+		if ignoreDatabases[dbname] {
 			continue
 		}
 		dbnames = append(dbnames, dbname)
