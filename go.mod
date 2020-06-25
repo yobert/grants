@@ -1,4 +1,4 @@
-module grants
+module github.com/yobert/grants
 
 require (
 	github.com/jackc/pgx v3.3.0+incompatible
