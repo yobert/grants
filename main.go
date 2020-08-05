@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx"
+	"github.com/joho/godotenv"
 	"github.com/pkg/errors"
 )
 
@@ -21,6 +22,8 @@ var (
 		User: "postgres",
 		Host: "/var/run/postgresql/.s.PGSQL.5432",
 	}
+
+	envfiles []string
 )
 
 func main() {
@@ -38,6 +41,16 @@ func mainRun() error {
 	mode := "file"
 
 	for _, arg := range os.Args[1:] {
+		if mode != "file" && strings.HasPrefix(arg, "-") {
+			fmt.Printf("Error: --%s argument expects a value\n\n", mode)
+			usage()
+			os.Exit(1)
+		}
+
+		if arg == "--env-file" {
+			mode = "env-file"
+			continue
+		}
 		if arg == "-n" || arg == "-d" || arg == "--dry" {
 			dry = true
 			continue
@@ -74,6 +87,7 @@ func mainRun() error {
 			example()
 			os.Exit(1)
 		}
+
 		if strings.HasPrefix(arg, "-") {
 			if arg != "--help" {
 				fmt.Printf("Invalid argument %#v\n\n", arg)
@@ -101,6 +115,8 @@ func mainRun() error {
 			baseconfig.User = arg
 		case "password":
 			baseconfig.Password = arg
+		case "env-file":
+			envfiles = append(envfiles, arg)
 		default:
 			return fmt.Errorf("Invalid argument mode %#v", mode)
 		}
@@ -109,9 +125,16 @@ func mainRun() error {
 	}
 
 	if mode != "file" {
-		fmt.Printf("Missing %s argument\n\n", mode)
+		fmt.Printf("Error: --%s argument expects a value\n\n", mode)
 		usage()
 		os.Exit(1)
+	}
+
+	if len(envfiles) > 0 {
+		if err := godotenv.Load(envfiles...); err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
 	}
 
 	var inputs []Input

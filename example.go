@@ -21,6 +21,8 @@ Options:
   -p, --port:    Port (default 5432)
   -u, --user:    User (default "postgres")
   --password:    Password on the command line. Insecure!
+
+  --env-file:    Load environment variables from file. Repeatable
 `)
 }
 
