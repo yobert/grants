@@ -16,11 +16,13 @@ var (
 	timing = false
 	dry    = false
 	quiet  = false
+	mysql  = false
 
 	baseconfig = pgx.ConnConfig{
 		User: "postgres",
 		Host: "/var/run/postgresql/.s.PGSQL.5432",
 	}
+
 )
 
 func main() {
