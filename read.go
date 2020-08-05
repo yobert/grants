@@ -2,10 +2,17 @@ package main
 
 import (
 	"io/ioutil"
+	"os"
+	"regexp"
 	"strings"
 
 	"github.com/pkg/errors"
 	"gopkg.in/yaml.v2"
+)
+
+var (
+	envSimpleRe  = regexp.MustCompile(`\$([a-zA-Z0-9_]+)`)
+	envComplexRe = regexp.MustCompile(`\$\{\s*([a-zA-Z0-9_]+)\s*\}`)
 )
 
 type Input struct {
@@ -35,6 +42,21 @@ type InputSequence struct {
 }
 type InputGrants []string
 
+func envSimpleReplacer(in []byte) []byte {
+	matches := envSimpleRe.FindSubmatch(in)
+	if matches == nil {
+		return in
+	}
+	return []byte(os.Getenv(string(matches[1])))
+}
+func envComplexReplacer(in []byte) []byte {
+	matches := envComplexRe.FindSubmatch(in)
+	if matches == nil {
+		return in
+	}
+	return []byte(os.Getenv(string(matches[1])))
+}
+
 func ReadFile(filepath string) (Input, error) {
 	defer timer("parse " + filepath).done()
 
@@ -44,6 +66,10 @@ func ReadFile(filepath string) (Input, error) {
 	if err != nil {
 		return input, errors.Wrapf(err, "Read file %#v", filepath)
 	}
+
+	// Before parsing the YAML, replace sh-style environment variables
+	buf = envComplexRe.ReplaceAllFunc(buf, envComplexReplacer)
+	buf = envSimpleRe.ReplaceAllFunc(buf, envSimpleReplacer)
 
 	if err := yaml.Unmarshal(buf, &input); err != nil {
 		return input, errors.Wrapf(err, "Parse file %#v", filepath)
