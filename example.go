@@ -56,7 +56,7 @@ func example() {
                   - USAGE
 
   anotheruser:
-    password: md55dcfe5d57dbd396467cf7a9d417ac29d # Passwords may be already hashed. This one is "hi"
+    password: md5ab1e0c4dd8740af7769758482c72d12a # Passwords may be already hashed. This one is "hi"
     grants:
       - login # Grants may be lowercase
     databases:
