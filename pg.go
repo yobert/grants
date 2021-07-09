@@ -110,8 +110,11 @@ func pgSelectExisting(defaultPrivRole string) (map[string]User, map[string]Datab
 		return nil
 	}()
 	if err != nil {
-		// Oh well.
-		fmt.Println(err)
+		if strings.Contains(err.Error(), "permission denied for view pg_shadow") {
+			// RDS suckage. Don't fret.
+		} else {
+			return nil, nil, err
+		}
 	}
 
 	// Load every user (role). This list is the same no matter what database we connect to.
