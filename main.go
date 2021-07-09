@@ -252,6 +252,7 @@ func mainRun() error {
 			newuser.Grants = nil
 			newuser.Databases = nil
 			newuser.Settings = nil
+			newuser.Roles = nil
 		}
 
 		// revoke user attributes
@@ -295,6 +296,25 @@ func mainRun() error {
 			for k := range olduser.Settings {
 				if newuser.Settings == nil || newuser.Settings[k] == "" {
 					if err := pgExecMain("ALTER ROLE " + pgQuoteIdent(name) + " SET " + pgQuoteIdent(k) + " = DEFAULT;"); err != nil {
+						return err
+					}
+				}
+			}
+		}
+
+		// role additions
+		for role := range newuser.Roles {
+			if olduser.Roles == nil || !olduser.Roles[role] {
+				if err := pgExecMain("GRANT " + pgQuoteIdent(role) + " TO " + pgQuoteIdent(name) + ";"); err != nil {
+					return err
+				}
+			}
+		}
+		// role removals
+		if newuser.Valid {
+			for role := range olduser.Roles {
+				if newuser.Roles == nil || !newuser.Roles[role] {
+					if err := pgExecMain("REVOKE " + pgQuoteIdent(role) + " FROM " + pgQuoteIdent(name) + ";"); err != nil {
 						return err
 					}
 				}

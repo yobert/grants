@@ -18,6 +18,7 @@ type InputUser struct {
 	Grants    InputGrants
 	Databases map[string]InputDatabase
 	Settings  map[string]string
+	Roles     []string
 }
 type InputDatabase struct {
 	Grants  InputGrants
@@ -76,6 +77,11 @@ func mergeInputs(inputs []Input) (map[string]User, string, error) {
 				u.Settings = map[string]string{}
 				for k, v := range user.Settings {
 					u.Settings[strings.ToLower(k)] = v
+				}
+				u.Roles = map[string]bool{}
+				for _, r := range user.Roles {
+					u.Roles[r] = true
+					u.Valid = true
 				}
 				if u.Password == "" {
 					u.Password = user.Password

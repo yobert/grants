@@ -174,10 +174,33 @@ func pgSelectExisting(defaultPrivRole string) (map[string]User, map[string]Datab
 			Grants:   grants,
 			Valid:    true,
 			Settings: settings,
+			Roles:    map[string]bool{},
 		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, nil, errors.WithStack(err)
+	}
+
+	// Load roles granted to each user
+
+	sql = `select r.rolname, rr.rolname from pg_auth_members as a inner join pg_roles as r on r.oid = a.member inner join pg_roles as rr on rr.oid = a.roleid;`
+	rows, err = conn.Query(sql)
+	if err != nil {
+		return nil, nil, errors.WithStack(err)
+	}
+	for rows.Next() {
+		var (
+			role   string
+			parent string
+		)
+		if err := rows.Scan(&role, &parent); err != nil {
+			return nil, nil, errors.WithStack(err)
+		}
+		if _, ok := out[role]; !ok {
+			// ignored user
+			continue
+		}
+		out[role].Roles[parent] = true
 	}
 
 	// Now go through each database, loading all the table permissions
