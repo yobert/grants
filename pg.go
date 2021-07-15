@@ -154,6 +154,9 @@ func pgSelectExisting(defaultPrivRole string) (map[string]User, map[string]Datab
 		if r.RolCreateRole {
 			grants[CreateRole.Name] = CreateRole
 		}
+		if r.RolCreateDB {
+			grants[CreateDB.Name] = CreateDB
+		}
 		if r.RolCanLogin {
 			grants[Login.Name] = Login
 		}

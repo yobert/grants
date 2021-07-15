@@ -15,10 +15,12 @@ var (
 	Login      = Perm{Name: "LOGIN"}
 	Inherit    = Perm{Name: "INHERIT"}
 	CreateRole = Perm{Name: "CREATEROLE"}
+	CreateDB   = Perm{Name: "CREATEDB"}
 	UserPerms  = []Perm{
 		Super,
 		Inherit,
 		CreateRole,
+		CreateDB,
 		Login,
 	}
 
