@@ -54,7 +54,7 @@ func pgConn(dbname string) (*pgx.Conn, error) {
 	config := baseconfig
 	config.Database = dbname
 
-	key := fmt.Sprintf("%s,%s,%s,%s", config.User, config.Host, config.Port, config.Database)
+	key := fmt.Sprintf("%s,%s,%d,%s", config.User, config.Host, config.Port, config.Database)
 
 	c, ok := pgConns[key]
 	if ok {
@@ -586,29 +586,120 @@ where
 func pgParseACL(input string, permlist ...[]Perm) (pgACL, error) {
 	var r pgACL
 
-	chunks := strings.Split(input, "/")
-	if len(chunks) != 2 {
-		return r, errors.New("Expected one forward slash")
+	role, rlen, err := pgParseACLRoleString(input)
+	if err != nil {
+		return r, err
 	}
-	r.Granter = chunks[1]
-	chunks = strings.Split(chunks[0], "=")
-	if len(chunks) != 2 {
-		return r, errors.New("Expected one equals sign")
+	r.Role = role
+
+	input = input[rlen:]
+
+	if len(input) == 0 || input[0] != '=' {
+		return r, errors.New("Expected equals sign after role name")
 	}
-	r.Role = chunks[0]
+
+	input = input[1:]
+	skip := 0
 chars:
-	for _, ch := range chunks[1] {
+	for _, ch := range input {
+		if ch == '/' {
+			break
+		}
 		for _, p := range permlist {
 			for _, pp := range p {
 				if pp.Pg == string(ch) {
 					r.Perms = append(r.Perms, pp)
+					skip++
 					continue chars
 				}
 			}
 		}
-		return r, errors.Errorf("Unhandled privilege character %#v", string(ch))
+		return r, fmt.Errorf("Unhandled privilege character %#v", string(ch))
+	}
+	input = input[skip:]
+
+	if len(input) == 0 {
+		return r, errors.New("Expected forward slash")
+	}
+	if input[0] != '/' {
+		return r, fmt.Errorf("Expected forward slash, got %#v", string(input[0]))
+	}
+	input = input[1:]
+
+	granter, rlen, err := pgParseACLRoleString(input)
+	if err != nil {
+		return r, err
+	}
+	r.Granter = granter
+
+	input = input[rlen:]
+
+	if len(input) > 0 {
+		return r, fmt.Errorf("Leftover text in ACL string: %#v", input)
 	}
 	return r, nil
+}
+func pgParseACLRoleString(str string) (string, int, error) {
+	if len(str) == 0 {
+		return "", 0, nil
+	}
+
+	max := 0
+	raw := false
+	quote := false
+	esc := false
+
+	var qstr strings.Builder
+
+	for idx, ch := range str {
+		max = idx
+
+		if raw {
+			if (ch >= 'a' && ch <= 'z') ||
+				(ch >= 'A' && ch <= 'Z') ||
+				(ch >= '0' && ch <= '9') ||
+				ch == '_' {
+				continue
+			}
+			return str[:max], max, nil
+		} else if quote {
+			if esc {
+				esc = false
+				qstr.WriteRune(ch)
+				continue
+			} else {
+				if ch == '\\' {
+					esc = true
+					continue
+				} else if ch == '"' {
+					return qstr.String(), max + 1, nil
+				} else {
+					qstr.WriteRune(ch)
+				}
+			}
+		} else {
+			if ch == '"' {
+				quote = true
+				continue
+			} else if (ch >= 'a' && ch <= 'z') ||
+				(ch >= 'A' && ch <= 'Z') ||
+				(ch >= '0' && ch <= '9') ||
+				ch == '_' {
+				raw = true
+				continue
+			} else {
+				return "", 0, nil
+			}
+		}
+	}
+
+	if raw {
+		return str, len(str), nil
+	} else if quote {
+		return "", 0, fmt.Errorf("Could not find closing quote from %#v", str)
+	} else {
+		return "", 0, fmt.Errorf("Could not parse role from %#v: Invalid state", str)
+	}
 }
 
 func pgPasswordHash(user, pw string) string {
