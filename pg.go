@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/md5"
 	"fmt"
 	"os"
@@ -8,8 +9,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/jackc/pgx"
 	"github.com/jackc/pgx/pgtype"
+	"github.com/jackc/pgx/v4"
 	"github.com/pkg/errors"
 )
 
@@ -51,6 +52,8 @@ var ignoreUsers = map[string]bool{
 
 func pgConn(dbname string) (*pgx.Conn, error) {
 
+	ctx := context.Background()
+
 	config := baseconfig
 	config.Database = dbname
 
@@ -64,7 +67,7 @@ func pgConn(dbname string) (*pgx.Conn, error) {
 	defer timer(fmt.Sprintf("%#v connect user %#v host %#v", config.Database, config.User, config.Host)).done()
 
 	var err error
-	c, err = pgx.Connect(config)
+	c, err = pgx.ConnectConfig(ctx, config)
 	if err != nil {
 		return nil, err
 	}
@@ -74,6 +77,8 @@ func pgConn(dbname string) (*pgx.Conn, error) {
 
 func pgSelectExisting(defaultPrivRole string) (map[string]User, map[string]Database, error) {
 	defer timer("total query").done()
+
+	ctx := context.Background()
 
 	// Postgres is a little weird in now it splits out databases. We can query the database list,
 	// but cannot query user permissions across databases from a single connection as far as I can tell.
@@ -92,7 +97,7 @@ func pgSelectExisting(defaultPrivRole string) (map[string]User, map[string]Datab
 	passwords := map[string]string{}
 	err = func() error {
 		sql := `select s.usename, s.passwd from pg_shadow as s where s.passwd is not null;`
-		rows, err := conn.Query(sql)
+		rows, err := conn.Query(ctx, sql)
 		if err != nil {
 			return errors.WithStack(err)
 		}
@@ -124,7 +129,7 @@ func pgSelectExisting(defaultPrivRole string) (map[string]User, map[string]Datab
                   r.rolconfig
            from pg_roles as r;`
 
-	rows, err := conn.Query(sql)
+	rows, err := conn.Query(ctx, sql)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -187,7 +192,7 @@ func pgSelectExisting(defaultPrivRole string) (map[string]User, map[string]Datab
 	// Load roles granted to each user
 
 	sql = `select r.rolname, rr.rolname from pg_auth_members as a inner join pg_roles as r on r.oid = a.member inner join pg_roles as rr on rr.oid = a.roleid;`
-	rows, err = conn.Query(sql)
+	rows, err = conn.Query(ctx, sql)
 	if err != nil {
 		return nil, nil, errors.WithStack(err)
 	}
@@ -211,7 +216,7 @@ func pgSelectExisting(defaultPrivRole string) (map[string]User, map[string]Datab
 	var dbnames []string
 	sql = `select datname, datacl from pg_catalog.pg_database;`
 
-	rows, err = conn.Query(sql)
+	rows, err = conn.Query(ctx, sql)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -279,6 +284,8 @@ func pgSelectExisting(defaultPrivRole string) (map[string]User, map[string]Datab
 func pgSelectExistingSchemas(dbname string, out map[string]User, existing map[string]Database) error {
 	defer timer(fmt.Sprintf("%#v query schema", dbname)).done()
 
+	ctx := context.Background()
+
 	conn, err := pgConn(dbname)
 	if err != nil {
 		return err
@@ -294,7 +301,7 @@ from pg_catalog.pg_namespace as n;`
 		acl    []string
 	}
 
-	rows, err := conn.Query(sql)
+	rows, err := conn.Query(ctx, sql)
 	if err != nil {
 		return errors.WithStack(err)
 	}
@@ -356,6 +363,8 @@ from pg_catalog.pg_namespace as n;`
 func pgSelectExistingTableish(dbname string, out map[string]User, existing map[string]Database) error {
 	defer timer(fmt.Sprintf("%#v query table ACLs", dbname)).done()
 
+	ctx := context.Background()
+
 	conn, err := pgConn(dbname)
 	if err != nil {
 		return err
@@ -378,7 +387,7 @@ func pgSelectExistingTableish(dbname string, out map[string]User, existing map[s
 		acl    []string
 	}
 
-	rows, err := conn.Query(sql)
+	rows, err := conn.Query(ctx, sql)
 	if err != nil {
 		return errors.WithStack(err)
 	}
@@ -472,6 +481,8 @@ func pgSelectExistingTableish(dbname string, out map[string]User, existing map[s
 func pgSelectExistingDefaults(defaultPrivRole string, dbname string, out map[string]User) error {
 	defer timer(fmt.Sprintf("%#v query defualt ACL", dbname)).done()
 
+	ctx := context.Background()
+
 	conn, err := pgConn(dbname)
 	if err != nil {
 		return err
@@ -497,7 +508,7 @@ where
 		acl    []string
 	}
 
-	rows, err := conn.Query(sql)
+	rows, err := conn.Query(ctx, sql)
 	if err != nil {
 		return errors.WithStack(err)
 	}
@@ -754,10 +765,10 @@ func pgQuoteIdentPair(a, b string) string {
 	return pgQuoteIdent(a) + "." + pgQuoteIdent(b)
 }
 
-func pgExecMain(sql string, args ...interface{}) error {
-	return pgExec("postgres", sql, args...)
+func pgExecMain(ctx context.Context, sql string, args ...interface{}) error {
+	return pgExec(ctx, "postgres", sql, args...)
 }
-func pgExec(db string, sql string, args ...interface{}) error {
+func pgExec(ctx context.Context, db string, sql string, args ...interface{}) error {
 	defer timer(fmt.Sprintf("%#v %s", db, pgReplace(sql, args))).done()
 
 	if db != lastPrintedDB && !quiet && !timing {
@@ -778,6 +789,6 @@ func pgExec(db string, sql string, args ...interface{}) error {
 		return err
 	}
 
-	_, err = conn.Exec(sql, args...)
+	_, err = conn.Exec(ctx, sql, args...)
 	return err
 }

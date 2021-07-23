@@ -1,32 +1,30 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
 
-	"github.com/jackc/pgx"
+	"github.com/jackc/pgx/v4"
 	"github.com/joho/godotenv"
 	"github.com/pkg/errors"
 )
 
 var (
-	debug  = false
-	timing = false
-	dry    = false
-	quiet  = false
-
-	baseconfig = pgx.ConnConfig{
-		User: "postgres",
-		Host: "/var/run/postgresql/.s.PGSQL.5432",
-	}
+	debug      = false
+	timing     = false
+	dry        = false
+	quiet      = false
+	baseconfig *pgx.ConnConfig
 
 	envfiles []string
 )
 
 func main() {
+
 	if err := mainRun(); err != nil {
 		printErr(err)
 		os.Exit(1)
@@ -35,6 +33,14 @@ func main() {
 
 func mainRun() error {
 	defer timer("total").done()
+
+	var err error
+	baseconfig, err = pgx.ParseConfig("")
+	if err != nil {
+		return err
+	}
+
+	ctx := context.Background()
 
 	var inpaths []string
 
@@ -242,7 +248,7 @@ func mainRun() error {
 
 		// "public" is a special built-in role for postgres. We ignore that one.
 		if !olduser.Valid && newuser.Valid && name != "public" {
-			if err := pgExecMain("CREATE ROLE " + pgQuoteIdent(name) + ";"); err != nil {
+			if err := pgExecMain(ctx, "CREATE ROLE "+pgQuoteIdent(name)+";"); err != nil {
 				return err
 			}
 		}
@@ -263,7 +269,7 @@ func mainRun() error {
 					_, ok = newuser.Grants[p.Name]
 				}
 				if !ok {
-					if err := pgExecMain("ALTER ROLE " + pgQuoteIdent(name) + " WITH NO" + p.Name + ";"); err != nil {
+					if err := pgExecMain(ctx, "ALTER ROLE "+pgQuoteIdent(name)+" WITH NO"+p.Name+";"); err != nil {
 						return err
 					}
 				}
@@ -277,7 +283,7 @@ func mainRun() error {
 				_, ok = olduser.Grants[p.Name]
 			}
 			if !ok {
-				if err := pgExecMain("ALTER ROLE " + pgQuoteIdent(name) + " WITH " + p.Name + ";"); err != nil {
+				if err := pgExecMain(ctx, "ALTER ROLE "+pgQuoteIdent(name)+" WITH "+p.Name+";"); err != nil {
 					return err
 				}
 			}
@@ -286,7 +292,7 @@ func mainRun() error {
 		// settings additions or changes
 		for k, v := range newuser.Settings {
 			if olduser.Settings == nil || olduser.Settings[k] != v {
-				if err := pgExecMain("ALTER ROLE " + pgQuoteIdent(name) + " SET " + pgQuoteIdent(k) + " = " + pgQuote(v) + ";"); err != nil {
+				if err := pgExecMain(ctx, "ALTER ROLE "+pgQuoteIdent(name)+" SET "+pgQuoteIdent(k)+" = "+pgQuote(v)+";"); err != nil {
 					return err
 				}
 			}
@@ -295,7 +301,7 @@ func mainRun() error {
 		if newuser.Valid {
 			for k := range olduser.Settings {
 				if newuser.Settings == nil || newuser.Settings[k] == "" {
-					if err := pgExecMain("ALTER ROLE " + pgQuoteIdent(name) + " SET " + pgQuoteIdent(k) + " = DEFAULT;"); err != nil {
+					if err := pgExecMain(ctx, "ALTER ROLE "+pgQuoteIdent(name)+" SET "+pgQuoteIdent(k)+" = DEFAULT;"); err != nil {
 						return err
 					}
 				}
@@ -305,7 +311,7 @@ func mainRun() error {
 		// role additions
 		for role := range newuser.Roles {
 			if olduser.Roles == nil || !olduser.Roles[role] {
-				if err := pgExecMain("GRANT " + pgQuoteIdent(role) + " TO " + pgQuoteIdent(name) + ";"); err != nil {
+				if err := pgExecMain(ctx, "GRANT "+pgQuoteIdent(role)+" TO "+pgQuoteIdent(name)+";"); err != nil {
 					return err
 				}
 			}
@@ -314,7 +320,7 @@ func mainRun() error {
 		if newuser.Valid {
 			for role := range olduser.Roles {
 				if newuser.Roles == nil || !newuser.Roles[role] {
-					if err := pgExecMain("REVOKE " + pgQuoteIdent(role) + " FROM " + pgQuoteIdent(name) + ";"); err != nil {
+					if err := pgExecMain(ctx, "REVOKE "+pgQuoteIdent(role)+" FROM "+pgQuoteIdent(name)+";"); err != nil {
 						return err
 					}
 				}
@@ -330,11 +336,11 @@ func mainRun() error {
 
 		if h1 != h2 && wantlogin {
 			if h1 == "" && h2 != "" {
-				if err := pgExecMain("ALTER ROLE " + pgQuoteIdent(name) + " WITH PASSWORD NULL;"); err != nil {
+				if err := pgExecMain(ctx, "ALTER ROLE "+pgQuoteIdent(name)+" WITH PASSWORD NULL;"); err != nil {
 					return err
 				}
 			} else {
-				if err := pgExecMain("ALTER ROLE " + pgQuoteIdent(name) + " WITH PASSWORD " + pgQuote(h1) + ";"); err != nil {
+				if err := pgExecMain(ctx, "ALTER ROLE "+pgQuoteIdent(name)+" WITH PASSWORD "+pgQuote(h1)+";"); err != nil {
 					return err
 				}
 			}
@@ -350,7 +356,7 @@ func mainRun() error {
 					_, ok = newuser.Databases[dbname].Grants[p.Name]
 				}
 				if !ok {
-					if err := pgExecMain("REVOKE " + p.Name + " ON DATABASE " + pgQuoteIdent(dbname) + " FROM " + pgQuoteIdent(name) + ";"); err != nil {
+					if err := pgExecMain(ctx, "REVOKE "+p.Name+" ON DATABASE "+pgQuoteIdent(dbname)+" FROM "+pgQuoteIdent(name)+";"); err != nil {
 						return err
 					}
 				}
@@ -365,7 +371,7 @@ func mainRun() error {
 						_, ok = newuser.Databases[dbname].Schemas[schemaname].Grants[p.Name]
 					}
 					if !ok {
-						if err := pgExec(dbname, "REVOKE "+p.Name+" ON SCHEMA "+pgQuoteIdent(schemaname)+" FROM "+pgQuoteIdent(name)+";"); err != nil {
+						if err := pgExec(ctx, dbname, "REVOKE "+p.Name+" ON SCHEMA "+pgQuoteIdent(schemaname)+" FROM "+pgQuoteIdent(name)+";"); err != nil {
 							return err
 						}
 					}
@@ -385,7 +391,7 @@ func mainRun() error {
 							if tablename == pgDefaultMarker {
 								sql = "ALTER DEFAULT PRIVILEGES FOR ROLE " + pgQuoteIdent(defaultPrivRole) + " IN SCHEMA " + pgQuoteIdent(schemaname) + " REVOKE " + p.Name + " ON TABLES FROM " + pgQuoteIdent(name) + ";"
 							}
-							if err := pgExec(dbname, sql); err != nil {
+							if err := pgExec(ctx, dbname, sql); err != nil {
 								return err
 							}
 						}
@@ -406,7 +412,7 @@ func mainRun() error {
 							if sequencename == pgDefaultMarker {
 								sql = "ALTER DEFAULT PRIVILEGES FOR ROLE " + pgQuoteIdent(defaultPrivRole) + " IN SCHEMA " + pgQuoteIdent(schemaname) + " REVOKE " + p.Name + " ON SEQUENCES FROM " + pgQuoteIdent(name) + ";"
 							}
-							if err := pgExec(dbname, sql); err != nil {
+							if err := pgExec(ctx, dbname, sql); err != nil {
 								return err
 							}
 						}
@@ -425,7 +431,7 @@ func mainRun() error {
 					_, ok = olduser.Databases[dbname].Grants[p.Name]
 				}
 				if !ok {
-					if err := pgExecMain("GRANT " + p.Name + " ON DATABASE " + pgQuoteIdent(dbname) + " TO " + pgQuoteIdent(name) + ";"); err != nil {
+					if err := pgExecMain(ctx, "GRANT "+p.Name+" ON DATABASE "+pgQuoteIdent(dbname)+" TO "+pgQuoteIdent(name)+";"); err != nil {
 						return err
 					}
 				}
@@ -440,7 +446,7 @@ func mainRun() error {
 						_, ok = olduser.Databases[dbname].Schemas[schemaname].Grants[p.Name]
 					}
 					if !ok {
-						if err := pgExec(dbname, "GRANT "+p.Name+" ON SCHEMA "+pgQuoteIdent(schemaname)+" TO "+pgQuoteIdent(name)+";"); err != nil {
+						if err := pgExec(ctx, dbname, "GRANT "+p.Name+" ON SCHEMA "+pgQuoteIdent(schemaname)+" TO "+pgQuoteIdent(name)+";"); err != nil {
 							return err
 						}
 					}
@@ -460,7 +466,7 @@ func mainRun() error {
 							if tablename == pgDefaultMarker {
 								sql = "ALTER DEFAULT PRIVILEGES FOR ROLE " + pgQuoteIdent(defaultPrivRole) + " IN SCHEMA " + pgQuoteIdent(schemaname) + " GRANT " + p.Name + " ON TABLES TO " + pgQuoteIdent(name) + ";"
 							}
-							if err := pgExec(dbname, sql); err != nil {
+							if err := pgExec(ctx, dbname, sql); err != nil {
 								return err
 							}
 						}
@@ -481,7 +487,7 @@ func mainRun() error {
 							if sequencename == pgDefaultMarker {
 								sql = "ALTER DEFAULT PRIVILEGES FOR ROLE " + pgQuoteIdent(defaultPrivRole) + " IN SCHEMA " + pgQuoteIdent(schemaname) + " GRANT " + p.Name + " ON SEQUENCES TO " + pgQuoteIdent(name) + ";"
 							}
-							if err := pgExec(dbname, sql); err != nil {
+							if err := pgExec(ctx, dbname, sql); err != nil {
 								return err
 							}
 						}
@@ -493,7 +499,7 @@ func mainRun() error {
 		// drop users
 		// "public" is a special built-in role for postgres. We ignore that one.
 		if olduser.Valid && !newuser.Valid && name != "public" {
-			if err := pgExecMain("DROP ROLE " + pgQuoteIdent(name) + ";"); err != nil {
+			if err := pgExecMain(ctx, "DROP ROLE "+pgQuoteIdent(name)+";"); err != nil {
 				return err
 			}
 		}
