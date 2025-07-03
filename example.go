@@ -49,7 +49,7 @@ func example() {
                 grants:
                   - SELECT
                   - INSERT
-                  - UDPATE
+                  - UPDATE
             sequences:
               sometable_id_seq:
                 grants:
