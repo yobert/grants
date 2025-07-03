@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/jackc/pgx/v4"
+	"github.com/jackc/pgx/v5"
 	"github.com/joho/godotenv"
 	"github.com/pkg/errors"
 )
@@ -235,7 +235,9 @@ func mainRun() error {
 			if olduser.Grants == nil {
 				olduser.Grants = map[string]Perm{}
 			}
-			olduser.Grants[Inherit.Name] = Inherit
+			for _, perm := range DefaultNewUserPerms {
+				olduser.Grants[perm.Name] = perm
+			}
 		}
 
 		if debug {

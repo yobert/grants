@@ -49,6 +49,7 @@ var (
 	Truncate   = Perm{Name: "TRUNCATE", Pg: "D"}
 	References = Perm{Name: "REFERENCES", Pg: "x"}
 	Trigger    = Perm{Name: "TRIGGER", Pg: "t"}
+	Maintain   = Perm{Name: "MAINTAIN", Pg: "m"}
 	TablePerms = []Perm{
 		Select,
 		Update,
@@ -57,12 +58,17 @@ var (
 		Truncate,
 		References,
 		Trigger,
+		Maintain,
 	}
 
 	SequencePerms = []Perm{
 		Usage,
 		Select,
 		Update,
+	}
+
+	DefaultNewUserPerms = []Perm{
+		Inherit,
 	}
 
 	//Star       = Perm{Name: "STAR", Pg: "*"}
