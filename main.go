@@ -329,20 +329,17 @@ func mainRun() error {
 			}
 		}
 
-		// password changes
-		h1 := pgPasswordHash(name, newuser.Password)
-		h2 := pgPasswordHash(name, olduser.Password)
-
 		// If the user will not have the login privilege, password changes will have no effect
 		_, wantlogin := newuser.Grants[Login.Name]
 
-		if h1 != h2 && wantlogin {
-			if h1 == "" && h2 != "" {
+		// password changes
+		if wantlogin && !pgPasswordEqual(name, olduser.Password, newuser.Password) {
+			if newuser.Password == "" && olduser.Password != "" {
 				if err := pgExecMain(ctx, "ALTER ROLE "+pgQuoteIdent(name)+" WITH PASSWORD NULL;"); err != nil {
 					return err
 				}
 			} else {
-				if err := pgExecMain(ctx, "ALTER ROLE "+pgQuoteIdent(name)+" WITH PASSWORD "+pgQuote(h1)+";"); err != nil {
+				if err := pgExecMain(ctx, "ALTER ROLE "+pgQuoteIdent(name)+" WITH PASSWORD "+pgQuote(pgPasswordHash(name, newuser.Password))+";"); err != nil {
 					return err
 				}
 			}

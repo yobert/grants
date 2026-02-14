@@ -94,3 +94,44 @@ func TestParseACLRoleString(t *testing.T) {
 		})
 	}
 }
+
+func TestPasswords(t *testing.T) {
+	user := "doof"
+
+	p0 := []string{""}
+	p1 := []string{"supersecret", "md5411118cb2687fa39673815936e93ecaa", "SCRAM-SHA-256$4096:2og3N/aa8EQzl1Jyp4xvIA==$ltVw7qmOYBzYCxdDjwckE69ZuEdWwx3Q7lGvjZha2vo=:tTQdh7H4MJBiPU2/c2fMgPZjebjuln76oiD8cohdhc0="}
+	p2 := []string{"someotherpassword"}
+
+	noneShouldEqual := func(a, b []string) {
+		for _, av := range a {
+			for _, bv := range b {
+				if pgPasswordEqual(user, av, bv) {
+					t.Errorf("pgPasswordEqual(%#v, %#v) should be false", av, bv)
+				}
+				if pgPasswordEqual(user, bv, av) {
+					t.Errorf("pgPasswordEqual(%#v, %#v) should be false", bv, av)
+				}
+			}
+		}
+	}
+
+	allShouldEqual := func(a []string) {
+		plain := a[0]
+		for _, v := range a {
+			if !pgPasswordEqual(user, plain, v) {
+				t.Errorf("pgPasswordEqual(%#v, %#v) should be true", plain, v)
+			}
+			if !pgPasswordEqual(user, v, plain) {
+				t.Errorf("pgPasswordEqual(%#v, %#v) should be true", v, plain)
+			}
+		}
+	}
+
+	noneShouldEqual(p0, p1)
+	noneShouldEqual(p0, p2)
+	noneShouldEqual(p1, p2)
+
+	allShouldEqual(p0)
+	allShouldEqual(p1)
+	allShouldEqual(p2)
+}

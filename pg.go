@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/md5"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -12,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/pkg/errors"
+	"golang.org/x/crypto/pbkdf2"
 )
 
 const (
@@ -713,43 +717,156 @@ func pgParseACLRoleString(str string) (string, int, error) {
 	}
 }
 
-func pgPasswordHash(user, pw string) string {
-	if pw == "" {
-		return pw
+func pgPasswordHash(user, p string) string {
+	t := pgPasswordType(p)
+	if t == 1 {
+		// old mode
+		//return pgPasswordMD5(user, p)
+		// new mode
+		return scramFromNew(p)
 	}
-	if len(pw) == 35 && strings.HasPrefix(pw, "md5") {
-		return pw
-	}
-	return fmt.Sprintf("md5%x", md5.Sum([]byte(pw+user)))
+	return p
 }
 
-var pgHolderRe = regexp.MustCompile(`\$\d+`)
+func pgPasswordMD5(user, p string) string {
+	return fmt.Sprintf("md5%x", md5.Sum([]byte(p+user)))
+}
 
-func pgReplace(sql string, params []interface{}) string {
-	return pgHolderRe.ReplaceAllStringFunc(sql, func(s string) string {
-		i, err := strconv.Atoi(s[1:])
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "placeholder %#v parse error: %v\n", s, err)
-			return s
+func pgPasswordEqual(user, p1, p2 string) bool {
+	p1t := pgPasswordType(p1)
+	p2t := pgPasswordType(p2)
+	// if same type, string must equal
+	if p1t == p2t {
+		return p1 == p2
+	}
+	// we can compare plain text with the other two types.
+	// swap so plain text is first if needed
+	if p2t == 1 {
+		p1, p1t, p2, p2t = p2, p2t, p1, p1t
+	}
+	// we can compare plain text to md5
+	if p1t == 1 && p2t == 2 {
+		return pgPasswordMD5(user, p1) == p2
+	}
+	// we can compare plain text to scram
+	if p1t == 1 && p2t == 3 {
+		hash, iterations, salt, ok := splitScram(p2)
+		//fmt.Printf("hash %#v iterations %#v salt %#v storedkey %#v serverkey %#v ok %#v\n",
+		//	hash, iterations, salt, storedkey, serverkey, ok)
+		if !ok {
+			return false
 		}
-		i--
-		if i < 0 || i+1 > len(params) {
-			fmt.Fprintf(os.Stderr, "placeholder %#v out of range\n", s)
-			return s
-		}
-		v := params[i]
-		switch vv := v.(type) {
-		case nil:
-			return "null"
-		case string:
-			return pgQuote(vv)
-		case int:
-			return strconv.Itoa(vv)
-		default:
-			fmt.Fprintf(os.Stderr, "placeholder %#v has unhandled type %T\n", s, v)
-			return s
-		}
-	})
+		// hash p1 with p2's parameters so we can compare
+		p := scramFromParameters(p1, hash, iterations, salt)
+		return p == p2
+	}
+	return false
+}
+
+func splitScram(p string) (string, int, []byte, bool) {
+	authPassword := strings.Split(p, "$")
+	if len(authPassword) != 3 {
+		return "", 0, nil, false
+	}
+	hash := authPassword[0]
+	if hash != "SCRAM-SHA-256" {
+		return "", 0, nil, false
+	}
+	authInfo := strings.Split(authPassword[1], ":")
+	if len(authInfo) != 2 {
+		return "", 0, nil, false
+	}
+	authValue := strings.Split(authPassword[2], ":")
+	if len(authValue) != 2 {
+		return "", 0, nil, false
+	}
+	iterations, err := strconv.ParseInt(authInfo[0], 10, 32)
+	if err != nil {
+		return "", 0, nil, false
+	}
+	salt, err := base64.StdEncoding.DecodeString(authInfo[1])
+	if err != nil {
+		return "", 0, nil, false
+	}
+	_, err = base64.StdEncoding.DecodeString(authValue[0])
+	if err != nil {
+		return "", 0, nil, false
+	}
+	_, err = base64.StdEncoding.DecodeString(authValue[1])
+	if err != nil {
+		return "", 0, nil, false
+	}
+	return hash, int(iterations), salt, true
+}
+
+func scramFromParameters(p1, hash string, iterations int, salt []byte) string {
+	// Now we hash p1 with the right parameters to end up with the same SCRAM-SHA-256 string postgres will have in pg_shadow.
+
+	// SCRAM-SHA-256:
+	// SaltedPassword = PBKDF2(password, salt, iterations, SHA256)
+	// ClientKey = HMAC-SHA256(SaltedPassword, "Client Key")
+	// StoredKey = SHA256(ClientKey)
+	// ServerKey = HMAC-SHA256(SaltedPassword, "Server Key")
+
+	saltedPassword := pbkdf2.Key([]byte(p1), salt, iterations, sha256.Size, sha256.New)
+
+	clientKeyHMAC := hmac.New(sha256.New, saltedPassword)
+	clientKeyHMAC.Write([]byte("Client Key"))
+	clientKey := clientKeyHMAC.Sum(nil)
+
+	storedKeyHash := sha256.Sum256(clientKey)
+	newStoredKey := storedKeyHash[:]
+
+	serverKeyHMAC := hmac.New(sha256.New, saltedPassword)
+	serverKeyHMAC.Write([]byte("Server Key"))
+	newServerKey := serverKeyHMAC.Sum(nil)
+
+	salt_b64 := base64.StdEncoding.EncodeToString(salt)
+	storedkey_b64 := base64.StdEncoding.EncodeToString(newStoredKey)
+	serverkey_b64 := base64.StdEncoding.EncodeToString(newServerKey)
+
+	return fmt.Sprintf("%s$%d:%s$%s:%s",
+		hash, iterations, salt_b64, storedkey_b64, serverkey_b64)
+}
+
+func scramFromNew(p string) string {
+	hash := "SCRAM-SHA-256"
+	iterations := 4096
+	salt := make([]byte, 16)
+	rand.Read(salt)
+
+	saltedPassword := pbkdf2.Key([]byte(p), salt, iterations, sha256.Size, sha256.New)
+
+	clientKeyHMAC := hmac.New(sha256.New, saltedPassword)
+	clientKeyHMAC.Write([]byte("Client Key"))
+	clientKey := clientKeyHMAC.Sum(nil)
+
+	storedKeyHash := sha256.Sum256(clientKey)
+	newStoredKey := storedKeyHash[:]
+
+	serverKeyHMAC := hmac.New(sha256.New, saltedPassword)
+	serverKeyHMAC.Write([]byte("Server Key"))
+	newServerKey := serverKeyHMAC.Sum(nil)
+
+	salt_b64 := base64.StdEncoding.EncodeToString(salt)
+	storedkey_b64 := base64.StdEncoding.EncodeToString(newStoredKey)
+	serverkey_b64 := base64.StdEncoding.EncodeToString(newServerKey)
+
+	return fmt.Sprintf("%s$%d:%s$%s:%s",
+		hash, iterations, salt_b64, storedkey_b64, serverkey_b64)
+}
+
+func pgPasswordType(p string) int {
+	if p == "" {
+		return 0 // special type for null / no password
+	}
+	if len(p) == 35 && strings.HasPrefix(p, "md5") {
+		return 2
+	}
+	if strings.HasPrefix(p, "SCRAM-SHA-256") {
+		return 3
+	}
+	return 1
 }
 
 func pgQuote(str string) string {
@@ -766,10 +883,10 @@ func pgQuoteIdentPair(a, b string) string {
 }
 
 func pgExecMain(ctx context.Context, sql string, args ...interface{}) error {
-	return pgExec(ctx, "postgres", sql, args...)
+	return pgExec(ctx, "postgres", sql)
 }
-func pgExec(ctx context.Context, db string, sql string, args ...interface{}) error {
-	defer timer(fmt.Sprintf("%#v %s", db, pgReplace(sql, args))).done()
+func pgExec(ctx context.Context, db string, sql string) error {
+	defer timer(fmt.Sprintf("%#v %s", db, sql)).done()
 
 	if db != lastPrintedDB && !quiet && !timing {
 		fmt.Println("\\connect " + pgQuoteIdent(db))
@@ -777,7 +894,7 @@ func pgExec(ctx context.Context, db string, sql string, args ...interface{}) err
 	}
 
 	if !timing && !quiet {
-		fmt.Println(pgReplace(sql, args))
+		fmt.Println(sql)
 	}
 
 	if dry {
@@ -789,6 +906,6 @@ func pgExec(ctx context.Context, db string, sql string, args ...interface{}) err
 		return err
 	}
 
-	_, err = conn.Exec(ctx, sql, args...)
+	_, err = conn.Exec(ctx, sql)
 	return err
 }
