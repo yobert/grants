@@ -121,6 +121,10 @@ func mainRun() error {
 	}
 	baseconfig = config
 
+	if debug {
+		fmt.Println("grants connecting to", configString(baseconfig), "...")
+	}
+
 	var inputs []Input
 	for _, inpath := range inpaths {
 		input, err := ReadFile(inpath)
@@ -542,4 +546,13 @@ func parseConfig() (*pgx.ConnConfig, error) {
 	}
 
 	return config, nil
+}
+
+func configString(config *pgx.ConnConfig) string {
+	return fmt.Sprintf("postgres://%s:%s@%s:%d/%s",
+		config.User,
+		"********",
+		config.Host,
+		config.Port,
+		config.Database)
 }
