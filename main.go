@@ -502,24 +502,35 @@ func parseConfig() (*pgx.ConnConfig, error) {
 		return nil, fmt.Errorf("Error parsing DATABASE_URL: %w", err)
 	}
 
-	config, err := pgx.ParseConfig("")
+	config, err := pgx.ParseConfig(os.Getenv("GRANTS_DATABASE_URL"))
 	if err != nil {
 		return nil, err
 	}
 
-	config.Host = appconfig.Host
-	config.Port = appconfig.Port
+	if config.Database == "" {
+		config.Database = "postgres"
+	}
+	if config.Host == "" {
+		config.Host = appconfig.Host
+	}
+	if config.Port == 0 {
+		config.Port = appconfig.Port
+	}
+	if config.User == "" {
+		config.User = "postgres"
+	}
+	// default to no password
 
-	config.Database = "postgres"
-	config.User = "postgres"
-
+	if v := os.Getenv("GRANTS_PGDATABASE"); v != "" {
+		config.Database = v
+	}
 	if v := os.Getenv("GRANTS_PGUSER"); v != "" {
 		config.User = v
 	}
 	if v := os.Getenv("GRANTS_PGPASSWORD"); v != "" {
 		config.Password = v
 	}
-	if v := os.Getenv("GRANTS_HOST"); v != "" {
+	if v := os.Getenv("GRANTS_PGHOST"); v != "" {
 		config.Host = v
 	}
 	if v := os.Getenv("GRANTS_PGPORT"); v != "" {

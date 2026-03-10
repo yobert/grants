@@ -45,9 +45,16 @@ Installation
 
     go install github.com/yobert/grants
 
+Configuration
+-------------
+
+Create a .env file with:
+
+	GRANTS_DATABASE_URL=postgres://user@host:password/dbname
+
 Usage
 -----
 
-    grants [path/to/yaml/file]
+    grants [path/to/yaml/file, defaults to grants.yaml]
 
 More information in --help and --example. Please file issues if you find bugs! Thanks!
