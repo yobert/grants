@@ -14,10 +14,11 @@ import (
 )
 
 var (
-	debug      = false
-	timing     = false
-	dry        = false
-	quiet      = false
+	debug  = false
+	timing = false
+	dry    = false
+	quiet  = false
+
 	baseconfig *pgx.ConnConfig
 
 	envfiles []string
@@ -33,12 +34,6 @@ func main() {
 
 func mainRun() error {
 	defer timer("total").done()
-
-	var err error
-	baseconfig, err = pgx.ParseConfig("")
-	if err != nil {
-		return err
-	}
 
 	ctx := context.Background()
 
@@ -73,22 +68,6 @@ func mainRun() error {
 			timing = true
 			continue
 		}
-		if arg == "-h" || arg == "--host" {
-			mode = "host"
-			continue
-		}
-		if arg == "-p" || arg == "--port" {
-			mode = "port"
-			continue
-		}
-		if arg == "-u" || arg == "--user" {
-			mode = "user"
-			continue
-		}
-		if arg == "--password" {
-			mode = "password"
-			continue
-		}
 		if arg == "--example" {
 			example()
 			os.Exit(1)
@@ -105,22 +84,6 @@ func mainRun() error {
 		switch mode {
 		case "file":
 			inpaths = append(inpaths, arg)
-		case "host":
-			baseconfig.Host = arg
-		case "port":
-			port, err := strconv.Atoi(arg)
-			if err != nil {
-				return err
-			}
-			if port < 1 || port > 65535 {
-				fmt.Printf("Port number %d out of range\n", port)
-				os.Exit(1)
-			}
-			baseconfig.Port = uint16(port)
-		case "user":
-			baseconfig.User = arg
-		case "password":
-			baseconfig.Password = arg
 		case "env-file":
 			envfiles = append(envfiles, arg)
 		default:
@@ -136,12 +99,27 @@ func mainRun() error {
 		os.Exit(1)
 	}
 
-	if len(envfiles) > 0 {
-		if err := godotenv.Load(envfiles...); err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+	if len(inpaths) == 0 {
+		inpaths = append(inpaths, "grants.yaml")
+	}
+
+	if len(envfiles) == 0 {
+		if _, err := os.Stat(".env"); err == nil {
+			envfiles = append(envfiles, ".env")
 		}
 	}
+
+	if len(envfiles) > 0 {
+		if err := godotenv.Load(envfiles...); err != nil {
+			return err
+		}
+	}
+
+	config, err := parseConfig()
+	if err != nil {
+		return err
+	}
+	baseconfig = config
 
 	var inputs []Input
 	for _, inpath := range inpaths {
@@ -505,4 +483,52 @@ func mainRun() error {
 	}
 
 	return nil
+}
+
+// This is a little goofy. That's because I want it to assume the right thing in the typical case of
+// your grants.yaml being defined next to your application, and so a .env file will define how the application
+// talks to the database-- as opposed to how the grants tool should talk to the database, which will need
+// elevated permissions.
+//
+// Most applications will just define DATABASE_URL. This tool will assume user "postgres" with no password and
+// the same host setting as DATABASE_URL. These assumptions can be overridden by:
+// GRANTS_PGUSER
+// GRANTS_PGPASSWORD
+// GRANTS_PGHOST
+// GRANTS_PGPORT
+func parseConfig() (*pgx.ConnConfig, error) {
+	appconfig, err := pgx.ParseConfig(os.Getenv("DATABASE_URL"))
+	if err != nil {
+		return nil, fmt.Errorf("Error parsing DATABASE_URL: %w", err)
+	}
+
+	config, err := pgx.ParseConfig("")
+	if err != nil {
+		return nil, err
+	}
+
+	config.Host = appconfig.Host
+	config.Port = appconfig.Port
+
+	config.Database = "postgres"
+	config.User = "postgres"
+
+	if v := os.Getenv("GRANTS_PGUSER"); v != "" {
+		config.User = v
+	}
+	if v := os.Getenv("GRANTS_PGPASSWORD"); v != "" {
+		config.Password = v
+	}
+	if v := os.Getenv("GRANTS_HOST"); v != "" {
+		config.Host = v
+	}
+	if v := os.Getenv("GRANTS_PGPORT"); v != "" {
+		i, err := strconv.ParseUint(v, 10, 16)
+		if err != nil {
+			return nil, fmt.Errorf("Error parsing port number from GRANTS_PGPORT: %w", err)
+		}
+		config.Port = uint16(i)
+	}
+
+	return config, nil
 }

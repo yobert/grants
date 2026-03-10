@@ -17,12 +17,9 @@ Options:
   -t, --timing:  Print timings
   --debug:       Print debug output
 
-  -h, --host:    Host to connect to, or unix socket path
-  -p, --port:    Port (default 5432)
-  -u, --user:    User (default "postgres")
-  --password:    Password on the command line. Insecure!
+  --env-file:    Load environment variables from file. Repeatable. If not passed, ".env" is used
 
-  --env-file:    Load environment variables from file. Repeatable
+  If no input yaml files are passed, "grants.yaml" is assumed.
 `)
 }
 
