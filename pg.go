@@ -47,8 +47,9 @@ var lastPrintedDB = "postgres"
 var pgSafeIdent = regexp.MustCompile(`^[a-zA-Z]+[a-zA-Z0-9_]*$`)
 
 var ignoreDatabases = map[string]bool{
-	"rdsadmin":  true,
-	"template0": true,
+	"rdsadmin":      true, // amazon RDS internal
+	"cloudsqladmin": true, // google cloud SQL internal
+	"template0":     true,
 }
 var ignoreUsers = map[string]bool{
 	"postgres": true,
